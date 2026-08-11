@@ -1,4 +1,4 @@
-package main
+package web
 
 // server.go — HTTP ハンドラ。
 //
@@ -16,7 +16,9 @@ import (
 	"strconv"
 	"sync"
 
-	"hearts/view"
+	"hearts/internal/game"
+	"hearts/internal/rules"
+	"hearts/internal/web/view"
 )
 
 const sessionCookie = "hearts_session"
@@ -27,10 +29,10 @@ const sessionCookie = "hearts_session"
 // 状態が混ざるおそれがあるうえ、人数設定 (hearts.pl の set_players/1) や
 // 第1トリックの流儀もセッション単位で変えられなくなる。
 type session struct {
-	mu    sync.Mutex
-	rules *Rules
-	opts  Options
-	game  *Game // nil ならまだルール選択の画面
+	mu     sync.Mutex
+	engine *rules.Engine
+	opts   rules.Options
+	game   *game.Game // nil ならまだルール選択の画面
 }
 
 // Server はセッションを束ねる。
@@ -77,27 +79,28 @@ func (s *Server) Routes(mux *http.ServeMux) {
 // セッション
 // =============================================
 
-// newRules は Prolog を読み込み、人数設定まで済ませる。
-func (s *Server) newRules() (*Rules, error) {
-	rules, err := NewRules(s.plDir)
+// newEngine は Prolog を読み込み、人数設定まで済ませる。
+func (s *Server) newEngine() (*rules.Engine, error) {
+	engine, err := rules.New(s.plDir)
 	if err != nil {
 		return nil, err
 	}
 	if s.players != 0 {
-		if err := rules.SetPlayers(s.players); err != nil {
+		if err := engine.SetPlayers(s.players); err != nil {
 			return nil, err
 		}
 	}
-	return rules, nil
+	return engine, nil
 }
 
-// startGame は選んだ流儀でゲームを 1 つ作る。
-func (s *Server) startGame(rules *Rules, opts Options) (*Game, error) {
+// StartGame は選んだ流儀でゲームを 1 つ作る。
+// 起動時にルールファイルの誤りを弾くためにも使う。
+func (s *Server) StartGame(engine *rules.Engine, opts rules.Options) (*game.Game, error) {
 	seed := s.seed
 	if seed == 0 {
 		seed = int64(newRandomID64())
 	}
-	return NewGame(rules, rand.New(rand.NewSource(seed)), s.limit, opts)
+	return game.New(engine, rand.New(rand.NewSource(seed)), s.limit, opts)
 }
 
 // session は Cookie からセッションを引く。無ければ作る。
@@ -112,11 +115,11 @@ func (s *Server) session(w http.ResponseWriter, r *http.Request) (*session, erro
 		}
 	}
 
-	rules, err := s.newRules()
+	engine, err := s.newEngine()
 	if err != nil {
 		return nil, err
 	}
-	sess := &session{rules: rules, opts: DefaultOptions()}
+	sess := &session{engine: engine, opts: rules.DefaultOptions()}
 
 	id := newSessionID()
 	s.mu.Lock()
@@ -161,7 +164,7 @@ func newRandomID64() uint64 {
 
 // showCurrent はゲーム中なら盤面を、開始前ならルール選択の画面を出す。
 func (s *Server) showCurrent(w http.ResponseWriter, r *http.Request) {
-	s.handle(w, r, func(*Game) error { return nil })
+	s.handle(w, r, func(*game.Game) error { return nil })
 }
 
 // postStart は選んだルールでゲームを始める。
@@ -175,17 +178,17 @@ func (s *Server) postStart(w http.ResponseWriter, r *http.Request) {
 	sess.mu.Lock()
 	defer sess.mu.Unlock()
 
-	sess.opts = ParseOptions(
+	sess.opts = rules.ParseOptions(
 		r.FormValue("points"),
 		r.FormValue("lead"),
 		r.FormValue("hearts_break"),
 	)
-	game, err := s.startGame(sess.rules, sess.opts)
+	g, err := s.StartGame(sess.engine, sess.opts)
 	if err != nil {
 		s.fail(w, err)
 		return
 	}
-	sess.game = game
+	sess.game = g
 	s.render(w, r, sess, "")
 }
 
@@ -205,7 +208,7 @@ func (s *Server) postSetup(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) postPass(w http.ResponseWriter, r *http.Request) {
-	s.handle(w, r, func(g *Game) error {
+	s.handle(w, r, func(g *game.Game) error {
 		nums, err := formInts(r, "card")
 		if err != nil {
 			return err
@@ -215,17 +218,17 @@ func (s *Server) postPass(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) postPlay(w http.ResponseWriter, r *http.Request) {
-	s.handle(w, r, func(g *Game) error {
+	s.handle(w, r, func(g *game.Game) error {
 		n, err := strconv.Atoi(r.FormValue("card"))
 		if err != nil {
-			return inputErr("カードの指定が正しくありません。")
+			return playerErr("カードの指定が正しくありません。")
 		}
 		return g.PlayCard(n)
 	})
 }
 
 func (s *Server) postNext(w http.ResponseWriter, r *http.Request) {
-	s.handle(w, r, func(g *Game) error { return g.Next() })
+	s.handle(w, r, func(g *game.Game) error { return g.Next() })
 }
 
 // postNew は同じルールでゲームを最初からやり直す。
@@ -239,19 +242,19 @@ func (s *Server) postNew(w http.ResponseWriter, r *http.Request) {
 	sess.mu.Lock()
 	defer sess.mu.Unlock()
 
-	game, err := s.startGame(sess.rules, sess.opts)
+	g, err := s.StartGame(sess.engine, sess.opts)
 	if err != nil {
 		s.fail(w, err)
 		return
 	}
-	sess.game = game
+	sess.game = g
 	s.render(w, r, sess, "")
 }
 
 // handle はセッションを取り出し、action で 1 手進めてから画面を返す。
 // action が入力ミスを返した場合はメッセージとして画面に出す。
 // まだゲームが始まっていなければ action は呼ばず、ルール選択の画面を出す。
-func (s *Server) handle(w http.ResponseWriter, r *http.Request, action func(*Game) error) {
+func (s *Server) handle(w http.ResponseWriter, r *http.Request, action func(*game.Game) error) {
 	sess, err := s.session(w, r)
 	if err != nil {
 		s.fail(w, err)
@@ -264,7 +267,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request, action func(*Gam
 	var msg string
 	if sess.game != nil {
 		if err := action(sess.game); err != nil {
-			var inputError ErrPlayerInput
+			var inputError game.ErrPlayerInput
 			if !errors.As(err, &inputError) {
 				s.fail(w, err)
 				return
@@ -279,7 +282,7 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, sess *session, m
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
 	if sess.game == nil {
-		vm, err := buildSetupVM(sess.rules, sess.opts, s.limit)
+		vm, err := buildSetupVM(sess.engine, sess.opts, s.limit)
 		if err != nil {
 			s.fail(w, err)
 			return
@@ -305,17 +308,23 @@ func (s *Server) fail(w http.ResponseWriter, err error) {
 	http.Error(w, "内部エラーが発生しました", http.StatusInternalServerError)
 }
 
+// playerErr は「入力がルール上おかしい」ことを表す。
+// 画面上のメッセージとして扱われ、500 にはならない。
+func playerErr(msg string) error {
+	return game.ErrPlayerInput{Msg: msg}
+}
+
 // formInts は同じ名前で複数送られてくるフォーム値を整数として読む。
 func formInts(r *http.Request, name string) ([]int, error) {
 	if err := r.ParseForm(); err != nil {
-		return nil, inputErr("フォームを読み取れませんでした。")
+		return nil, playerErr("フォームを読み取れませんでした。")
 	}
 	values := r.Form[name]
 	out := make([]int, 0, len(values))
 	for _, v := range values {
 		n, err := strconv.Atoi(v)
 		if err != nil {
-			return nil, inputErr("カードの指定が正しくありません。")
+			return nil, playerErr("カードの指定が正しくありません。")
 		}
 		out = append(out, n)
 	}

@@ -1,4 +1,4 @@
-package main
+package rules
 
 // options.go — ゲーム開始時に選ぶ流儀。
 //
@@ -23,7 +23,7 @@ func DefaultOptions() Options {
 }
 
 // Apply は Prolog 側の設定を書き換える。
-func (o Options) Apply(r *Rules) error {
+func (o Options) Apply(r *Engine) error {
 	if err := r.SetFirstTrickPoints(o.FirstTrickPoints); err != nil {
 		return err
 	}

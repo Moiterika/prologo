@@ -1,9 +1,17 @@
-package main
-
-// rules.go — Prolog ブリッジ。
+// Package rules はハートのルール判定を提供する。
 //
-// ゲームのルール判定は「すべて」Prolog 側 (hearts.pl とその上のレイヤ) に
-// 問い合わせる。Go 側はシャッフル・入出力・進行管理だけを担当する。
+// 判定そのものは「すべて」Prolog で書かれている。このパッケージは純 Go 実装の
+// Prolog 処理系 (github.com/ichiban/prolog) にルールファイルを読み込ませ、
+// Go から問い合わせるための薄い橋渡しをするだけで、ルールを Go で書き直しては
+// いない。
+//
+//	compat.pl       … SWI 固有述語の互換レイヤ (hearts.pl を無修正で読むため)
+//	hearts.pl       … 元のルール定義 (変更なし)
+//	hearts_rules.pl … ハートブレイク・第1トリック・パス・精算などの追加規則
+//	hearts_ai.pl    … CPU の思考
+//
+// 使い方は Example を参照。
+package rules
 
 import (
 	"embed"
@@ -83,6 +91,27 @@ func cardList(cards []Card) string {
 	return "[" + strings.Join(terms, ",") + "]"
 }
 
+// Remove は手札から 1 枚を取り除いた新しいスライスを返す。
+// 元のスライスは変更しない。同じカードが無ければそのまま返す。
+func Remove(hand []Card, card Card) []Card {
+	for i, c := range hand {
+		if c == card {
+			return append(hand[:i:i], hand[i+1:]...)
+		}
+	}
+	return hand
+}
+
+// IndexOf は cards の中で target が何番目かを返す。無ければ -1。
+func IndexOf(cards []Card, target Card) int {
+	for i, c := range cards {
+		if c == target {
+			return i
+		}
+	}
+	return -1
+}
+
 func cardListOfLists(hands [][]Card) string {
 	terms := make([]string, len(hands))
 	for i, h := range hands {
@@ -118,16 +147,19 @@ func boolAtom(b bool) string {
 // Prolog エンジン
 // =============================================
 
-// Rules は Prolog インタプリタを包み、ゲームが必要とする問い合わせを提供する。
-type Rules struct {
+// Engine は Prolog インタプリタを包み、ゲームが必要とする問い合わせを提供する。
+//
+// Engine は並行安全ではない。同時に複数の対局を進める場合は、対局ごとに
+// 1 つずつ作ること。
+type Engine struct {
 	p          *prolog.Interpreter
 	rankValues map[string]int // 表示用に hearts.pl の rank_value/2 を取り込んだもの
 }
 
-// NewRules は Prolog を起動し、ルールファイル群を読み込む。
+// New は Prolog を起動し、ルールファイル群を読み込む。
 // dir が空なら実行ファイルに埋め込んだものを、そうでなければそのディレクトリの
 // .pl を読む (hearts.pl を書き換えて挙動を試したいとき用)。
-func NewRules(dir string) (*Rules, error) {
+func New(dir string) (*Engine, error) {
 	// Prolog 側に標準入力は与えない (端末入力は Go の UI が独占する)。
 	p := prolog.New(strings.NewReader(""), os.Stdout)
 
@@ -149,7 +181,7 @@ func NewRules(dir string) (*Rules, error) {
 		}
 	}
 
-	r := &Rules{p: p, rankValues: map[string]int{}}
+	r := &Engine{p: p, rankValues: map[string]int{}}
 	deck, err := r.Deck()
 	if err != nil {
 		return nil, err
@@ -168,7 +200,7 @@ func NewRules(dir string) (*Rules, error) {
 }
 
 // scan は最初の解を dest に取り込む。解が無い場合は errNoSolution を返す。
-func (r *Rules) scan(query string, dest interface{}) error {
+func (r *Engine) scan(query string, dest interface{}) error {
 	sol := r.p.QuerySolution(query)
 	if err := sol.Err(); err != nil {
 		if errors.Is(err, prolog.ErrNoSolutions) {
@@ -183,7 +215,7 @@ func (r *Rules) scan(query string, dest interface{}) error {
 }
 
 // prove はゴールが成功するかどうかだけを判定する。
-func (r *Rules) prove(query string) (bool, error) {
+func (r *Engine) prove(query string) (bool, error) {
 	err := r.scan(query, nil)
 	switch {
 	case err == nil:
@@ -200,21 +232,21 @@ var errNoSolution = errors.New("解がありません")
 // --- hearts.pl の設定値 ---
 
 // TotalPlayers は hearts.pl の total_players/1。
-func (r *Rules) TotalPlayers() (int, error) {
+func (r *Engine) TotalPlayers() (int, error) {
 	var v struct{ N int }
 	err := r.scan("total_players(N).", &v)
 	return v.N, err
 }
 
 // HandSize は hearts.pl の hand_size/1。
-func (r *Rules) HandSize() (int, error) {
+func (r *Engine) HandSize() (int, error) {
 	var v struct{ S int }
 	err := r.scan("hand_size(S).", &v)
 	return v.S, err
 }
 
 // SetPlayers は hearts.pl の set_players/1。
-func (r *Rules) SetPlayers(n int) error {
+func (r *Engine) SetPlayers(n int) error {
 	ok, err := r.prove(fmt.Sprintf("set_players(%d).", n))
 	if err != nil {
 		return err
@@ -251,7 +283,7 @@ const (
 )
 
 // SetFirstTrickPoints は第1トリックの点数札の扱いを切り替える。
-func (r *Rules) SetFirstTrickPoints(mode FirstTrickPoints) error {
+func (r *Engine) SetFirstTrickPoints(mode FirstTrickPoints) error {
 	ok, err := r.prove(fmt.Sprintf("set_first_trick_points(%s).", mode))
 	if err != nil {
 		return err
@@ -263,7 +295,7 @@ func (r *Rules) SetFirstTrickPoints(mode FirstTrickPoints) error {
 }
 
 // SetFirstTrickLead は第1トリックのリードの決め方を切り替える。
-func (r *Rules) SetFirstTrickLead(mode FirstTrickLead) error {
+func (r *Engine) SetFirstTrickLead(mode FirstTrickLead) error {
 	ok, err := r.prove(fmt.Sprintf("set_first_trick_lead(%s).", mode))
 	if err != nil {
 		return err
@@ -286,7 +318,7 @@ const (
 )
 
 // SetHeartsBreakRule はハートブレイク規則の有無を切り替える。
-func (r *Rules) SetHeartsBreakRule(mode HeartsBreakRule) error {
+func (r *Engine) SetHeartsBreakRule(mode HeartsBreakRule) error {
 	ok, err := r.prove(fmt.Sprintf("set_hearts_break_rule(%s).", mode))
 	if err != nil {
 		return err
@@ -299,34 +331,34 @@ func (r *Rules) SetHeartsBreakRule(mode HeartsBreakRule) error {
 
 // Deck は hearts_rules.pl の deck/1 (hearts.pl の suit/1, rank/1,
 // excluded_cards/1 から生成される)。
-func (r *Rules) Deck() ([]Card, error) {
+func (r *Engine) Deck() ([]Card, error) {
 	var v struct{ Deck []Card }
 	err := r.scan("deck(Deck).", &v)
 	return v.Deck, err
 }
 
-func (r *Rules) rankValue(rank string) (int, error) {
+func (r *Engine) rankValue(rank string) (int, error) {
 	var v struct{ V int }
 	err := r.scan(fmt.Sprintf("rank_value(%s, V).", rank), &v)
 	return v.V, err
 }
 
 // RankValue は表示用の並べ替えに使う (hearts.pl の rank_value/2 由来)。
-func (r *Rules) RankValue(rank string) int {
+func (r *Engine) RankValue(rank string) int {
 	return r.rankValues[rank]
 }
 
 // --- 配札 ---
 
 // ValidateDeal は hearts.pl の validate_deal/1。
-func (r *Rules) ValidateDeal(hands [][]Card) (bool, error) {
+func (r *Engine) ValidateDeal(hands [][]Card) (bool, error) {
 	return r.prove(fmt.Sprintf("validate_deal(%s).", cardListOfLists(hands)))
 }
 
 // --- 手番 ---
 
 // OpeningCard は第1トリックで必ず出すカード (通常 2♣)。
-func (r *Rules) OpeningCard() (Card, error) {
+func (r *Engine) OpeningCard() (Card, error) {
 	var v struct{ C Card }
 	err := r.scan("opening_card(C).", &v)
 	return v.C, err
@@ -334,7 +366,7 @@ func (r *Rules) OpeningCard() (Card, error) {
 
 // LegalCards は hearts.pl の can_play/3 に、ハートブレイクと第1トリックの
 // 制約を重ねた legal_cards/5 の結果。
-func (r *Rules) LegalCards(hand []Card, lead *Card, trickNo int, broken bool) ([]Card, error) {
+func (r *Engine) LegalCards(hand []Card, lead *Card, trickNo int, broken bool) ([]Card, error) {
 	q := fmt.Sprintf("legal_cards(%s, %s, %d, %s, Cards).",
 		cardList(hand), leadTerm(lead), trickNo, boolAtom(broken))
 	var v struct{ Cards []Card }
@@ -343,7 +375,7 @@ func (r *Rules) LegalCards(hand []Card, lead *Card, trickNo int, broken bool) ([
 }
 
 // IsLegal は 1 枚のカードが出せるかを legal_play/5 で確かめる。
-func (r *Rules) IsLegal(hand []Card, lead *Card, trickNo int, broken bool, card Card) (bool, error) {
+func (r *Engine) IsLegal(hand []Card, lead *Card, trickNo int, broken bool, card Card) (bool, error) {
 	q := fmt.Sprintf("legal_play(%s, %s, %d, %s, %s).",
 		cardList(hand), leadTerm(lead), trickNo, boolAtom(broken), card.Term())
 	return r.prove(q)
@@ -352,7 +384,7 @@ func (r *Rules) IsLegal(hand []Card, lead *Card, trickNo int, broken bool, card 
 // --- トリック ---
 
 // DetermineWinner は hearts.pl の determine_winner/3。
-func (r *Rules) DetermineWinner(trick []Card, leadSuit string) (Card, error) {
+func (r *Engine) DetermineWinner(trick []Card, leadSuit string) (Card, error) {
 	q := fmt.Sprintf("determine_winner(%s, %s, W).", cardList(trick), leadSuit)
 	var v struct{ W Card }
 	err := r.scan(q, &v)
@@ -361,19 +393,19 @@ func (r *Rules) DetermineWinner(trick []Card, leadSuit string) (Card, error) {
 
 // ContainsPointCard は得点札 (ハート全般と ♠Q) が含まれるか。
 // ハートブレイクの判定に使う。
-func (r *Rules) ContainsPointCard(cards []Card) (bool, error) {
+func (r *Engine) ContainsPointCard(cards []Card) (bool, error) {
 	return r.prove(fmt.Sprintf("contains_point_card(%s).", cardList(cards)))
 }
 
 // CardPoint は hearts.pl の card_point/2。
-func (r *Rules) CardPoint(c Card) (int, error) {
+func (r *Engine) CardPoint(c Card) (int, error) {
 	var v struct{ P int }
 	err := r.scan(fmt.Sprintf("card_point(%s, P).", c.Term()), &v)
 	return v.P, err
 }
 
 // CalculateScore は hearts.pl の calculate_score/2。
-func (r *Rules) CalculateScore(cards []Card) (int, error) {
+func (r *Engine) CalculateScore(cards []Card) (int, error) {
 	var v struct{ T int }
 	err := r.scan(fmt.Sprintf("calculate_score(%s, T).", cardList(cards)), &v)
 	return v.T, err
@@ -382,21 +414,21 @@ func (r *Rules) CalculateScore(cards []Card) (int, error) {
 // --- パス ---
 
 // PassCount は 1 回に交換する枚数。
-func (r *Rules) PassCount() (int, error) {
+func (r *Engine) PassCount() (int, error) {
 	var v struct{ N int }
 	err := r.scan("pass_count(N).", &v)
 	return v.N, err
 }
 
 // PassDirection はラウンド番号から交換方向を返す (left/right/across/hold)。
-func (r *Rules) PassDirection(round int) (string, error) {
+func (r *Engine) PassDirection(round int) (string, error) {
 	var v struct{ D string }
 	err := r.scan(fmt.Sprintf("pass_direction(%d, D).", round), &v)
 	return v.D, err
 }
 
 // PassTarget は from が誰に渡すかを返す。
-func (r *Rules) PassTarget(from int, dir string, n int) (int, error) {
+func (r *Engine) PassTarget(from int, dir string, n int) (int, error) {
 	var v struct{ To int }
 	err := r.scan(fmt.Sprintf("pass_target(%d, %s, %d, To).", from, dir, n), &v)
 	return v.To, err
@@ -407,7 +439,7 @@ func (r *Rules) PassTarget(from int, dir string, n int) (int, error) {
 // RoundScores は取ったカード束から各自の失点を求める。
 // スラム (1人で全失点を独占) の達成者がいればそのプレイヤー番号、
 // いなければ -1 を返す。
-func (r *Rules) RoundScores(taken [][]Card) ([]int, int, error) {
+func (r *Engine) RoundScores(taken [][]Card) ([]int, int, error) {
 	q := fmt.Sprintf("round_scores(%s, Final, Slammer).", cardListOfLists(taken))
 	var v struct {
 		Final   []int
@@ -418,21 +450,21 @@ func (r *Rules) RoundScores(taken [][]Card) ([]int, int, error) {
 }
 
 // TotalRoundPoints は 1 ラウンドに存在する失点の総和 (通常 26)。
-func (r *Rules) TotalRoundPoints() (int, error) {
+func (r *Engine) TotalRoundPoints() (int, error) {
 	var v struct{ Total int }
 	err := r.scan("total_round_points(Total).", &v)
 	return v.Total, err
 }
 
 // GameOver は誰かが上限点に達したか。
-func (r *Rules) GameOver(scores []int, limit int) (bool, error) {
+func (r *Engine) GameOver(scores []int, limit int) (bool, error) {
 	return r.prove(fmt.Sprintf("game_over(%s, %d).", intList(scores), limit))
 }
 
 // --- CPU の思考 ---
 
 // ChooseCard は hearts_ai.pl の choose_card/6。
-func (r *Rules) ChooseCard(hand []Card, lead *Card, trick []Card, trickNo int, broken bool) (Card, error) {
+func (r *Engine) ChooseCard(hand []Card, lead *Card, trick []Card, trickNo int, broken bool) (Card, error) {
 	q := fmt.Sprintf("choose_card(%s, %s, %s, %d, %s, C).",
 		cardList(hand), leadTerm(lead), cardList(trick), trickNo, boolAtom(broken))
 	var v struct{ C Card }
@@ -441,7 +473,7 @@ func (r *Rules) ChooseCard(hand []Card, lead *Card, trick []Card, trickNo int, b
 }
 
 // ChoosePass は hearts_ai.pl の choose_pass/3。
-func (r *Rules) ChoosePass(hand []Card, count int) ([]Card, error) {
+func (r *Engine) ChoosePass(hand []Card, count int) ([]Card, error) {
 	q := fmt.Sprintf("choose_pass(%s, %d, Cards).", cardList(hand), count)
 	var v struct{ Cards []Card }
 	err := r.scan(q, &v)

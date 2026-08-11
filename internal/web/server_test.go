@@ -1,4 +1,4 @@
-package main
+package web
 
 // server_test.go — HTTP 層の検証。
 // 実際に httptest でサーバーを立て、フォーム送信でゲームを進める。

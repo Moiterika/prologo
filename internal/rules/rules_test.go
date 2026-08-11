@@ -1,4 +1,4 @@
-package main
+package rules
 
 // rules_test.go — Prolog 側のルール (hearts.pl とその上のレイヤ) の検証。
 
@@ -9,9 +9,9 @@ import (
 
 func c(suit, rank string) Card { return Card{Suit: suit, Rank: rank} }
 
-func newTestRules(t *testing.T) *Rules {
+func newTestEngine(t *testing.T) *Engine {
 	t.Helper()
-	r, err := NewRules("")
+	r, err := New("")
 	if err != nil {
 		t.Fatalf("Prolog の読み込みに失敗: %v", err)
 	}
@@ -27,7 +27,7 @@ func cardSet(cards []Card) map[Card]bool {
 }
 
 func TestConfigFromHeartsPl(t *testing.T) {
-	r := newTestRules(t)
+	r := newTestEngine(t)
 
 	if n, err := r.TotalPlayers(); err != nil || n != 4 {
 		t.Fatalf("total_players = %d, %v; want 4", n, err)
@@ -48,7 +48,7 @@ func TestConfigFromHeartsPl(t *testing.T) {
 }
 
 func TestCardPoints(t *testing.T) {
-	r := newTestRules(t)
+	r := newTestEngine(t)
 	cases := []struct {
 		card Card
 		want int
@@ -69,7 +69,7 @@ func TestCardPoints(t *testing.T) {
 
 // マストフォロー: 台札のスートを持っていたらそれしか出せない。
 func TestMustFollowSuit(t *testing.T) {
-	r := newTestRules(t)
+	r := newTestEngine(t)
 	hand := []Card{c("c", "5"), c("c", "9"), c("h", "3"), c("s", "q")}
 	lead := c("c", "2")
 
@@ -85,7 +85,7 @@ func TestMustFollowSuit(t *testing.T) {
 
 // 台札のスートが無ければ何でも出せる (スートを切れる)。
 func TestVoidSuitCanPlayAnything(t *testing.T) {
-	r := newTestRules(t)
+	r := newTestEngine(t)
 	hand := []Card{c("h", "3"), c("s", "q"), c("d", "7")}
 	lead := c("c", "2")
 
@@ -100,7 +100,7 @@ func TestVoidSuitCanPlayAnything(t *testing.T) {
 
 // 第1トリックのリードは必ず ♣2。
 func TestFirstTrickMustLeadTwoOfClubs(t *testing.T) {
-	r := newTestRules(t)
+	r := newTestEngine(t)
 	hand := []Card{c("c", "2"), c("c", "9"), c("h", "3"), c("s", "a")}
 
 	legal, err := r.LegalCards(hand, nil, 1, false)
@@ -114,7 +114,7 @@ func TestFirstTrickMustLeadTwoOfClubs(t *testing.T) {
 
 // 「点数札禁止」を選んだときは第1トリックで ♥ と ♠Q を出せない。
 func TestFirstTrickNoPointCards(t *testing.T) {
-	r := newTestRules(t)
+	r := newTestEngine(t)
 	if err := r.SetFirstTrickPoints(ForbidAllPoints); err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +160,7 @@ func TestFirstTrickPointsModes(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		r := newTestRules(t)
+		r := newTestEngine(t)
 		if err := r.SetFirstTrickPoints(tc.mode); err != nil {
 			t.Fatalf("%s: %v", tc.mode, err)
 		}
@@ -196,7 +196,7 @@ func TestFirstTrickAllBannedIsAllowed(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		r := newTestRules(t)
+		r := newTestEngine(t)
 		if err := r.SetFirstTrickPoints(tc.mode); err != nil {
 			t.Fatal(err)
 		}
@@ -213,7 +213,7 @@ func TestFirstTrickAllBannedIsAllowed(t *testing.T) {
 
 // forbid_hearts では ♠Q が「出せるカード」なので、ハートは依然として禁止。
 func TestForbidHeartsKeepsQueenAsEscape(t *testing.T) {
-	r := newTestRules(t)
+	r := newTestEngine(t)
 	if err := r.SetFirstTrickPoints(ForbidHearts); err != nil {
 		t.Fatal(err)
 	}
@@ -233,7 +233,7 @@ func TestFirstTrickLeadModes(t *testing.T) {
 	hand := []Card{c("c", "2"), c("c", "9"), c("h", "3"), c("s", "a"), c("s", "q")}
 
 	// 既定: ♣2 しか出せない
-	r := newTestRules(t)
+	r := newTestEngine(t)
 	legal, err := r.LegalCards(hand, nil, 1, false)
 	if err != nil {
 		t.Fatal(err)
@@ -292,7 +292,7 @@ func TestFirstTrickLeadModes(t *testing.T) {
 
 // ブレイクは得点札 (ハート全般と ♠Q) が場に出た時点で起きる。
 func TestContainsPointCard(t *testing.T) {
-	r := newTestRules(t)
+	r := newTestEngine(t)
 
 	cases := []struct {
 		name  string
@@ -317,7 +317,7 @@ func TestContainsPointCard(t *testing.T) {
 
 // ハートブレイク規則を使う設定では、ブレイク前はハートからリードできない。
 func TestCannotLeadHeartsBeforeBreak(t *testing.T) {
-	r := newTestRules(t)
+	r := newTestEngine(t)
 	if err := r.SetHeartsBreakRule(HeartsBreakOn); err != nil {
 		t.Fatal(err)
 	}
@@ -344,7 +344,7 @@ func TestCannotLeadHeartsBeforeBreak(t *testing.T) {
 
 // ハートブレイク規則を使わない設定 (既定) では、いつでもハートでリードできる。
 func TestHeartsBreakRuleOffAllowsHeartLead(t *testing.T) {
-	r := newTestRules(t)
+	r := newTestEngine(t)
 	hand := []Card{c("h", "3"), c("h", "k"), c("d", "7"), c("s", "q")}
 
 	// 既定は off
@@ -371,7 +371,7 @@ func TestHeartsBreakRuleOffAllowsHeartLead(t *testing.T) {
 
 // 手札がハートだけなら、ブレイク規則を使う設定でもブレイク前にリードできる。
 func TestHeartsOnlyHandMayLead(t *testing.T) {
-	r := newTestRules(t)
+	r := newTestEngine(t)
 	if err := r.SetHeartsBreakRule(HeartsBreakOn); err != nil {
 		t.Fatal(err)
 	}
@@ -388,7 +388,7 @@ func TestHeartsOnlyHandMayLead(t *testing.T) {
 
 // トリックの勝者は台札スートの最強カード。
 func TestDetermineWinner(t *testing.T) {
-	r := newTestRules(t)
+	r := newTestEngine(t)
 
 	trick := []Card{c("c", "5"), c("c", "k"), c("h", "a"), c("s", "q")}
 	win, err := r.DetermineWinner(trick, "c")
@@ -402,7 +402,7 @@ func TestDetermineWinner(t *testing.T) {
 
 // スラム (1人で全失点を独占)。
 func TestSlam(t *testing.T) {
-	r := newTestRules(t)
+	r := newTestEngine(t)
 
 	var allPoints []Card
 	for _, rank := range []string{"2", "3", "4", "5", "6", "7", "8", "9", "10", "j", "q", "k", "a"} {
@@ -428,7 +428,7 @@ func TestSlam(t *testing.T) {
 
 // スラムでない通常精算。
 func TestNormalScoring(t *testing.T) {
-	r := newTestRules(t)
+	r := newTestEngine(t)
 
 	taken := [][]Card{
 		{c("h", "2"), c("h", "3")},
@@ -453,7 +453,7 @@ func TestNormalScoring(t *testing.T) {
 
 // hearts.pl の validate_deal/1。
 func TestValidateDeal(t *testing.T) {
-	r := newTestRules(t)
+	r := newTestEngine(t)
 	deck, err := r.Deck()
 	if err != nil {
 		t.Fatal(err)
@@ -474,7 +474,7 @@ func TestValidateDeal(t *testing.T) {
 
 // パス方向は 左 → 右 → 向かい → 交換なし の 4 周期。
 func TestPassDirection(t *testing.T) {
-	r := newTestRules(t)
+	r := newTestEngine(t)
 
 	want := map[int]string{1: "left", 2: "right", 3: "across", 4: "hold", 5: "left"}
 	for round, dir := range want {
@@ -496,7 +496,7 @@ func TestPassDirection(t *testing.T) {
 // CPU の AI が常に合法手を返し、1 ラウンドが破綻なく終わることを確認する。
 // 失点の合計は必ず 26 点になる。
 func TestAIPlaysFullRoundLegally(t *testing.T) {
-	r := newTestRules(t)
+	r := newTestEngine(t)
 	rng := rand.New(rand.NewSource(2024))
 
 	for round := 0; round < 20; round++ {
@@ -552,7 +552,7 @@ func TestAIPlaysFullRoundLegally(t *testing.T) {
 						round, trickNo, card, hands[pi], lead)
 				}
 
-				hands[pi] = removeCard(hands[pi], card)
+				hands[pi] = Remove(hands[pi], card)
 				played = append(played, card)
 				players = append(players, pi)
 				if k == 0 {
@@ -565,7 +565,7 @@ func TestAIPlaysFullRoundLegally(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			winner := players[indexOfCard(played, win)]
+			winner := players[IndexOf(played, win)]
 			taken[winner] = append(taken[winner], played...)
 
 			if !broken {

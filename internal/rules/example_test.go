@@ -1,4 +1,4 @@
-package main
+package rules
 
 // example_test.go — 使い方の実例。
 //
@@ -24,12 +24,12 @@ func labels(cards []Card) string {
 	return strings.Join(out, " ")
 }
 
-func mustRules() *Rules {
-	rules, err := NewRules("")
+func mustEngine() *Engine {
+	e, err := New("")
 	if err != nil {
 		log.Fatal(err)
 	}
-	return rules
+	return e
 }
 
 // マストフォローの判定。
@@ -37,8 +37,8 @@ func mustRules() *Rules {
 //
 // 判定しているのは hearts.pl の can_play/3 で、
 // 「台札と同じスートを持っていたらそれを出さなければならない」という規則。
-func ExampleRules_LegalCards() {
-	rules := mustRules()
+func ExampleEngine_LegalCards() {
+	e := mustEngine()
 
 	// 第 1 トリックには別の制約があるので、ここでは 5 巡目を例にする。
 	// (第 4 引数はハートブレイク済みかどうか。フォロー時には影響しない)
@@ -52,7 +52,7 @@ func ExampleRules_LegalCards() {
 		{Suit: "c", Rank: "9"},
 		{Suit: "c", Rank: "5"},
 	}
-	legal, err := rules.LegalCards(hand, &lead, trickNo, false)
+	legal, err := e.LegalCards(hand, &lead, trickNo, false)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -66,7 +66,7 @@ func ExampleRules_LegalCards() {
 		{Suit: "h", Rank: "3"},
 		{Suit: "d", Rank: "7"},
 	}
-	legal, err = rules.LegalCards(void, &lead, trickNo, false)
+	legal, err = e.LegalCards(void, &lead, trickNo, false)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -91,8 +91,8 @@ func ExampleRules_LegalCards() {
 // 判定しているのは hearts.pl の determine_winner/3 で、
 // 「台札と同じスートの中で一番強いカードが勝つ」という規則。
 // 台札と違うスートは、どれだけ強くても勝敗に関わらない。
-func ExampleRules_DetermineWinner() {
-	rules := mustRules()
+func ExampleEngine_DetermineWinner() {
+	e := mustEngine()
 
 	// ♣ でリードされたトリック。♥A や ♠Q は台札スートではないので無関係。
 	trick := []Card{
@@ -101,7 +101,7 @@ func ExampleRules_DetermineWinner() {
 		{Suit: "h", Rank: "a"},
 		{Suit: "s", Rank: "q"},
 	}
-	winner, err := rules.DetermineWinner(trick, "c")
+	winner, err := e.DetermineWinner(trick, "c")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -117,7 +117,7 @@ func ExampleRules_DetermineWinner() {
 	}
 
 	// 失点は hearts.pl の calculate_score/2 で数える。
-	points, err := rules.CalculateScore(trick)
+	points, err := e.CalculateScore(trick)
 	if err != nil {
 		log.Fatal(err)
 	}

@@ -1,4 +1,4 @@
-package main
+package web
 
 // viewmodel.go — Game の状態を画面用の構造体に詰め替える。
 // テンプレート側で判断が要らないよう、ここで表示に必要な形まで整える。
@@ -6,47 +6,57 @@ package main
 import (
 	"fmt"
 
-	"hearts/view"
+	"hearts/internal/game"
+	"hearts/internal/rules"
+	"hearts/internal/web/view"
 )
 
+// passDirJa は Prolog が返すパス方向 (pass_direction/2) の日本語表記。
+var passDirJa = map[string]string{
+	"left":   "左隣",
+	"right":  "右隣",
+	"across": "向かい",
+	"hold":   "交換なし",
+}
+
 // buildSetupVM はゲーム開始前のルール選択画面を組み立てる。
-func buildSetupVM(rules *Rules, current Options, limit int) (view.SetupVM, error) {
-	maxPoints, err := rules.TotalRoundPoints()
+func buildSetupVM(engine *rules.Engine, current rules.Options, limit int) (view.SetupVM, error) {
+	maxPoints, err := engine.TotalRoundPoints()
 	if err != nil {
 		return view.SetupVM{}, err
 	}
-	opening, err := rules.OpeningCard()
+	opening, err := engine.OpeningCard()
 	if err != nil {
 		return view.SetupVM{}, err
 	}
-	open := CardLabel(opening)
+	open := rules.CardLabel(opening)
 
 	// 制限のゆるい順に並べる。
 	points := []view.OptionVM{
 		{
-			Value:       string(AllowPoints),
+			Value:       string(rules.AllowPoints),
 			Label:       "点数札許可 (♥ 全般・♠Q 許可)",
 			Description: "1巡目の制限なし。台札のスートが無ければハートも ♠Q も自由に捨てられます。",
 		},
 		{
-			Value:       string(ForbidHearts),
+			Value:       string(rules.ForbidHearts),
 			Label:       "♥ のみ禁止 (♠Q 許可)",
 			Description: "1巡目にハートは出せませんが、台札のスートが無ければ ♠Q は捨てられます。",
 		},
 		{
-			Value:       string(ForbidAllPoints),
+			Value:       string(rules.ForbidAllPoints),
 			Label:       "点数札禁止 (♥ 全般・♠Q は禁止)",
 			Description: "no blood on the first trick。1巡目に失点が動きません。",
 		},
 	}
 	lead := []view.OptionVM{
 		{
-			Value:       string(LeadOpeningCard),
+			Value:       string(rules.LeadOpeningCard),
 			Label:       "第1トリックは " + open + " から始める",
 			Description: open + " を持っている人が、必ずそのカードでリードします。",
 		},
 		{
-			Value:       string(LeadFree),
+			Value:       string(rules.LeadFree),
 			Label:       "第1トリックは " + open + " を持つ人が自由に出せる",
 			Description: open + " を持っている人が先手になりますが、出すカードは自由に選べます。",
 		},
@@ -54,12 +64,12 @@ func buildSetupVM(rules *Rules, current Options, limit int) (view.SetupVM, error
 
 	heartsBreak := []view.OptionVM{
 		{
-			Value:       string(HeartsBreakOff),
+			Value:       string(rules.HeartsBreakOff),
 			Label:       "なし",
 			Description: "いつでもハートでリードできます。",
 		},
 		{
-			Value:       string(HeartsBreakOn),
+			Value:       string(rules.HeartsBreakOn),
 			Label:       "あり",
 			Description: "得点札 (♥ 全般と ♠Q) が場に出るまで、ハートからリードできません。手札がハートだけの場合は例外です。",
 		},
@@ -97,7 +107,7 @@ func seatAreas(players int) []string {
 	}
 }
 
-func buildTableVM(g *Game, errMsg string) (view.TableVM, error) {
+func buildTableVM(g *game.Game, errMsg string) (view.TableVM, error) {
 	takenPoints, err := g.TakenPoints()
 	if err != nil {
 		return view.TableVM{}, err
@@ -111,7 +121,7 @@ func buildTableVM(g *Game, errMsg string) (view.TableVM, error) {
 
 	// このトリックで誰が何番目に何を出したか
 	type play struct {
-		card  Card
+		card  rules.Card
 		order int
 	}
 	plays := map[int]play{}
@@ -123,11 +133,11 @@ func buildTableVM(g *Game, errMsg string) (view.TableVM, error) {
 	for i, name := range names {
 		s := view.SeatVM{
 			Name:       name,
-			IsYou:      i == HumanSeat,
+			IsYou:      i == game.HumanSeat,
 			Total:      scores[i],
 			RoundTaken: takenPoints[i],
 			TakenCount: takenCounts[i],
-			Turn:       g.Phase() == PhasePlaying && g.turn == i,
+			Turn:       g.Phase() == game.PhasePlaying && g.Turn() == i,
 		}
 		if i < len(areas) {
 			s.Area = areas[i]
@@ -140,7 +150,7 @@ func buildTableVM(g *Game, errMsg string) (view.TableVM, error) {
 			s.Played = &card
 			s.PlayOrder = p.order
 			// 勝者のカードはトリックが揃ってから光らせる
-			s.Winner = g.Phase() == PhaseTrickDone && i == g.TrickWinner()
+			s.Winner = g.Phase() == game.PhaseTrickDone && i == g.TrickWinner()
 		}
 		seats[i] = s
 	}
@@ -150,7 +160,7 @@ func buildTableVM(g *Game, errMsg string) (view.TableVM, error) {
 	if err != nil {
 		return view.TableVM{}, err
 	}
-	legalSet := make(map[Card]bool, len(legal))
+	legalSet := make(map[rules.Card]bool, len(legal))
 	for _, c := range legal {
 		legalSet[c] = true
 	}
@@ -191,40 +201,40 @@ func buildTableVM(g *Game, errMsg string) (view.TableVM, error) {
 	}
 
 	if lead := g.Lead(); lead != nil {
-		vm.LeadSuit = SuitSymbol(lead.Suit)
+		vm.LeadSuit = rules.SuitSymbol(lead.Suit)
 	}
 	if s := g.RoundSlammer(); s >= 0 {
 		vm.SlammerName = names[s]
 	}
-	if g.Phase() == PhaseGameOver {
+	if g.Phase() == game.PhaseGameOver {
 		w := g.Winner()
 		vm.WinnerName = names[w]
-		vm.YouWin = w == HumanSeat
+		vm.YouWin = w == game.HumanSeat
 	}
 	return vm, nil
 }
 
 // centerText は円卓の中央に出す一言。
-func centerText(g *Game) string {
+func centerText(g *game.Game) string {
 	names := g.Names()
 	switch g.Phase() {
-	case PhaseTrickDone:
+	case game.PhaseTrickDone:
 		return fmt.Sprintf("%sが取りました (%d 点)", names[g.TrickWinner()], g.TrickPoints())
-	case PhasePlaying:
+	case game.PhasePlaying:
 		if g.YourTurn() {
 			return "あなたの番です"
 		}
-		return names[g.turn] + " の番です"
+		return names[g.Turn()] + " の番です"
 	}
 	return ""
 }
 
-func cardVM(c Card, number int, legal bool) view.CardVM {
+func cardVM(c rules.Card, number int, legal bool) view.CardVM {
 	return view.CardVM{
 		Number: number,
-		Suit:   SuitSymbol(c.Suit),
-		Rank:   RankLabel(c.Rank),
-		Red:    IsRedSuit(c.Suit),
+		Suit:   rules.SuitSymbol(c.Suit),
+		Rank:   rules.RankLabel(c.Rank),
+		Red:    rules.IsRedSuit(c.Suit),
 		Legal:  legal,
 	}
 }

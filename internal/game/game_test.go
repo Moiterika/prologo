@@ -1,4 +1,4 @@
-package main
+package game
 
 // game_test.go — 状態機械の検証。
 // 人間の席も「合法手の先頭を選ぶ」だけの自動操作で 1 ゲーム通す。
@@ -6,17 +6,22 @@ package main
 import (
 	"math/rand"
 	"testing"
+
+	"hearts/internal/rules"
 )
 
 func newTestGame(t *testing.T, seed int64, limit int) *Game {
 	t.Helper()
-	return newTestGameOpts(t, seed, limit, DefaultOptions())
+	return newTestGameOpts(t, seed, limit, rules.DefaultOptions())
 }
 
-func newTestGameOpts(t *testing.T, seed int64, limit int, opts Options) *Game {
+func newTestGameOpts(t *testing.T, seed int64, limit int, opts rules.Options) *Game {
 	t.Helper()
-	rules := newTestRules(t)
-	g, err := NewGame(rules, rand.New(rand.NewSource(seed)), limit, opts)
+	engine, err := rules.New("")
+	if err != nil {
+		t.Fatalf("Prolog の読み込みに失敗: %v", err)
+	}
+	g, err := New(engine, rand.New(rand.NewSource(seed)), limit, opts)
 	if err != nil {
 		t.Fatalf("ゲームを開始できません: %v", err)
 	}
@@ -24,7 +29,7 @@ func newTestGameOpts(t *testing.T, seed int64, limit int, opts Options) *Game {
 }
 
 // handNumber は表示順のどこにそのカードがあるかを返す (1 始まり)。
-func handNumber(t *testing.T, g *Game, card Card) int {
+func handNumber(t *testing.T, g *Game, card rules.Card) int {
 	t.Helper()
 	for i, c := range g.Hand() {
 		if c == card {
@@ -98,7 +103,7 @@ func TestFullGameReachesGameOver(t *testing.T) {
 		t.Fatal("1 ラウンドも精算されていません")
 	}
 
-	over, err := g.rules.GameOver(g.Scores(), g.Limit())
+	over, err := g.engine.GameOver(g.Scores(), g.Limit())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +129,7 @@ func TestFirstTrickStartsWithOpeningCard(t *testing.T) {
 		autoStep(t, g)
 	}
 
-	opening, err := g.rules.OpeningCard()
+	opening, err := g.engine.OpeningCard()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,9 +180,9 @@ func TestInvalidInputIsPlayerError(t *testing.T) {
 
 // ♠Q が場に出ただけでブレイクし、以降ハートでリードできるようになる。
 func TestQueenOfSpadesBreaksHearts(t *testing.T) {
-	opts := DefaultOptions()
-	opts.HeartsBreak = HeartsBreakOn
-	opts.FirstTrickPoints = AllowPoints // ♠Q が第1トリックで出てもよいようにする
+	opts := rules.DefaultOptions()
+	opts.HeartsBreak = rules.HeartsBreakOn
+	opts.FirstTrickPoints = rules.AllowPoints // ♠Q が第1トリックで出てもよいようにする
 
 	// ♥ を一度も出さずに ♠Q が出るトリックを探す
 	for seed := int64(1); seed <= 40; seed++ {
@@ -195,7 +200,7 @@ func TestQueenOfSpadesBreaksHearts(t *testing.T) {
 				if card.Suit == "h" {
 					hasHeart = true
 				}
-				if card == (Card{Suit: "s", Rank: "q"}) {
+				if card == (rules.Card{Suit: "s", Rank: "q"}) {
 					hasQueen = true
 				}
 			}
@@ -215,9 +220,9 @@ func TestPassExchangesCards(t *testing.T) {
 		t.Skip("このシードでは交換なしのラウンドから始まる")
 	}
 
-	before := append([]Card(nil), g.Hand()...)
+	before := append([]rules.Card(nil), g.Hand()...)
 	size := len(before)
-	given := []Card{before[0], before[1], before[2]}
+	given := []rules.Card{before[0], before[1], before[2]}
 
 	if err := g.SubmitPass([]int{1, 2, 3}); err != nil {
 		t.Fatal(err)

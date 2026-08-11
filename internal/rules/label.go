@@ -1,4 +1,4 @@
-package main
+package rules
 
 // label.go — カードの表示用ラベル。
 // ブラウザ上なので ♠♥♦♣ をそのまま使える (端末の桁幅問題が無い)。
@@ -22,13 +22,6 @@ var rankLabel = map[string]string{
 	"q": "Q",
 	"k": "K",
 	"a": "A",
-}
-
-var passDirJa = map[string]string{
-	"left":   "左隣",
-	"right":  "右隣",
-	"across": "向かい",
-	"hold":   "交換なし",
 }
 
 // CardLabel は "♠A" のような表示文字列。

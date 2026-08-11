@@ -1,8 +1,13 @@
-package main
+package web
 
 // viewmodel_test.go — 画面用構造体の組み立ての検証。
 
-import "testing"
+import (
+	"testing"
+
+	"hearts/internal/game"
+	"hearts/internal/rules"
+)
 
 // 円卓は「あなた」が手前 (bottom)、そこから席順に左回り。
 func TestSeatAreas(t *testing.T) {
@@ -31,7 +36,7 @@ func TestSeatsCarryPlayedCards(t *testing.T) {
 	g := newTestGame(t, 20260811, 100)
 
 	// 交換を済ませてトリックプレイに入る
-	for g.Phase() == PhasePassing {
+	for g.Phase() == game.PhasePassing {
 		autoStep(t, g)
 	}
 	// 人間が先手だと、この時点ではまだ場が空。1 手進めて場に札を出す。
@@ -47,12 +52,12 @@ func TestSeatsCarryPlayedCards(t *testing.T) {
 	if len(vm.Seats) != g.Players() {
 		t.Fatalf("席数 = %d; want %d", len(vm.Seats), g.Players())
 	}
-	if vm.Seats[HumanSeat].Area != "bottom" || !vm.Seats[HumanSeat].IsYou {
-		t.Errorf("あなたの席 = %+v; 手前 (bottom) のはず", vm.Seats[HumanSeat])
+	if vm.Seats[game.HumanSeat].Area != "bottom" || !vm.Seats[game.HumanSeat].IsYou {
+		t.Errorf("あなたの席 = %+v; 手前 (bottom) のはず", vm.Seats[game.HumanSeat])
 	}
 
 	// 実際に場に出ているカードと突き合わせる
-	played := map[int]Card{}
+	played := map[int]rules.Card{}
 	order := map[int]int{}
 	for i, pi := range g.PlayedBy() {
 		played[pi] = g.Played()[i]
@@ -75,9 +80,9 @@ func TestSeatsCarryPlayedCards(t *testing.T) {
 			t.Errorf("%s が出した %v が席に付いていません", s.Name, card)
 			continue
 		}
-		if s.Played.Suit != SuitSymbol(card.Suit) || s.Played.Rank != RankLabel(card.Rank) {
+		if s.Played.Suit != rules.SuitSymbol(card.Suit) || s.Played.Rank != rules.RankLabel(card.Rank) {
 			t.Errorf("%s の席のカード = %s%s; want %s",
-				s.Name, s.Played.Suit, s.Played.Rank, CardLabel(card))
+				s.Name, s.Played.Suit, s.Played.Rank, rules.CardLabel(card))
 		}
 		if s.PlayOrder != order[i] {
 			t.Errorf("%s の出した順 = %d; want %d", s.Name, s.PlayOrder, order[i])
@@ -88,12 +93,12 @@ func TestSeatsCarryPlayedCards(t *testing.T) {
 // トリックが揃うまで「取り」の印は付かない。
 func TestWinnerMarkOnlyAfterTrick(t *testing.T) {
 	g := newTestGame(t, 5, 100)
-	for g.Phase() == PhasePassing {
+	for g.Phase() == game.PhasePassing {
 		autoStep(t, g)
 	}
 
 	// まだ揃っていない段階では誰にも印が無い
-	if g.Phase() == PhasePlaying {
+	if g.Phase() == game.PhasePlaying {
 		vm, err := buildTableVM(g, "")
 		if err != nil {
 			t.Fatal(err)
@@ -106,10 +111,10 @@ func TestWinnerMarkOnlyAfterTrick(t *testing.T) {
 	}
 
 	// トリックが揃うまで進める
-	for step := 0; g.Phase() != PhaseTrickDone && step < 50; step++ {
+	for step := 0; g.Phase() != game.PhaseTrickDone && step < 50; step++ {
 		autoStep(t, g)
 	}
-	if g.Phase() != PhaseTrickDone {
+	if g.Phase() != game.PhaseTrickDone {
 		t.Fatal("トリックが終わりません")
 	}
 
