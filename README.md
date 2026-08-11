@@ -14,7 +14,11 @@ go build -o hearts.exe ./cmd/game
 ./hearts.exe
 ```
 
-起動したら http://127.0.0.1:8080/ を開く。`make run` でも起動できる。
+起動したら http://127.0.0.1:8080/ を開く。
+
+`Makefile` も置いてあるが (`make run` / `make test` / `make doc-http` …)、
+`make` が入っていない環境でも困らないよう、以下では素の `go` コマンドを併記する。
+括弧内が対応する make のターゲット。
 
 | オプション | 意味 |
 | --- | --- |
@@ -26,7 +30,7 @@ go build -o hearts.exe ./cmd/game
 
 `-pl internal/rules` を付ければ **再ビルドせずに `.pl` を書き換えて挙動を試せる**。
 
-`.templ` を編集したときは `make generate` (= `go tool templ generate`)。
+`.templ` を編集したときは `go tool templ generate` (make generate)。
 生成物の `*_templ.go` はコミットしてあるので、通常のビルドでは不要。
 
 ## ディレクトリ構成
@@ -59,10 +63,7 @@ internal/web/view/   templ による画面
 `internal/rules` に置いてある (embed は親ディレクトリを参照できない)。
 
 `rules.Engine` は並行安全ではない。対局ごとに 1 つ作ること。
-
-```
-go doc -all ./internal/rules    # Example つきのドキュメント
-```
+使い方は [ドキュメント](#ドキュメント)の Example を参照。
 
 ### internal/game — 進行
 
@@ -86,6 +87,59 @@ go doc -all ./internal/rules    # Example つきのドキュメント
   Prolog インタプリタもセッションごとに 1 つ持つので、同時アクセスで状態が混ざらない。
 - **円卓**: 3x3 のグリッドに席を置き、「あなた」を必ず手前 (下段中央) にする。
   出したカードは名札の中央寄りに並ぶので、誰が出した札かが分かる。
+
+## ドキュメント
+
+端末に出す場合。
+
+```
+go doc -all ./internal/rules      # Example つきの全文    (make doc)
+go doc ./internal/rules Engine    # 型だけ
+```
+
+ブラウザで見る場合。`go` ツールチェーンにドキュメントサーバーは同梱されていない
+(Go 1.13 で `godoc` が本体から外れて `golang.org/x/tools` へ移った) ので、
+`go run` で取ってくる。`@latest` なので `go.mod` の依存には入らない。
+
+```
+go run golang.org/x/tools/cmd/godoc@latest -http 127.0.0.1:6060    # (make doc-http)
+```
+
+起動後、数秒待ってから http://127.0.0.1:6060/pkg/hearts/internal/rules/ を開く。
+`internal/` パッケージもそのまま見えて、Example は `// Output:` の中身まで展開される。
+
+### PowerShell から直接叩くときの注意
+
+PowerShell 5.1 は `=` を含む引数を**勝手に分割する**。
+
+```
+> go run . -http=127.0.0.1:6060
+argv[1] = "-http=127"
+argv[2] = ".0.0.1:6060"        ← 2 つに割れて「Unexpected arguments」になる
+```
+
+クォートするか、スペース区切りにすれば通る。
+
+```powershell
+go run golang.org/x/tools/cmd/godoc@latest "-http=127.0.0.1:6060"
+go run golang.org/x/tools/cmd/godoc@latest -http 127.0.0.1:6060
+```
+
+`hearts.exe` のフラグも同じなので、`-addr=...` ではなく `-addr ...` と書く。
+`make` 経由なら sh が解釈するのでこの問題は起きない。
+
+### pkgsite (pkg.go.dev と同じ見た目) を使う場合
+
+現行の公式ツールは [pkgsite](https://pkg.go.dev/golang.org/x/pkgsite) だが、
+**このモジュールはそのままでは表示できない**。モジュールパス `hearts` は最初の要素に
+ドットが無いため、pkgsite が標準ライブラリのパスと解釈して 424 を返す。
+
+```
+go run golang.org/x/pkgsite/cmd/pkgsite@latest -http 127.0.0.1:8090 .
+```
+
+使うなら `go.mod` のモジュールパスを `example.com/hearts` のような
+ドットを含むものに変える必要がある (公開する予定ができたときにリポジトリの URL へ)。
 
 ## 実装されているルール
 
@@ -138,7 +192,7 @@ go doc -all ./internal/rules    # Example つきのドキュメント
 ## テスト
 
 ```
-make test
+go test -count=1 ./...    # (make test)
 ```
 
 | ファイル | 内容 |
@@ -150,7 +204,8 @@ make test
 | `internal/web/server_test.go` | HTTP 層。実際にサーバーを立ててフォーム送信でトリックを進め、セッションが独立していることを確認 |
 
 Example 関数は `go test` で実行され、標準出力が末尾の `// Output:` コメントと
-一致するかまで検証される。使い方の説明と回帰テストを兼ねる。
+一致するかまで検証される。使い方の説明と回帰テストを兼ねる
+(→ [ドキュメント](#ドキュメント))。
 
 ```
 go test -run Example -v ./internal/rules
