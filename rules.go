@@ -225,6 +225,78 @@ func (r *Rules) SetPlayers(n int) error {
 	return nil
 }
 
+// --- 第1トリックの流儀 ---
+
+// FirstTrickPoints は第1トリックの点数札の扱い。
+type FirstTrickPoints string
+
+const (
+	// ForbidAllPoints は点数札 (ハート全般と ♠Q) を出せない流儀。
+	// いわゆる no blood on the first trick。
+	ForbidAllPoints FirstTrickPoints = "forbid_all"
+	// ForbidHearts はハートだけ出せない流儀 (♠Q は出せる)。
+	ForbidHearts FirstTrickPoints = "forbid_hearts"
+	// AllowPoints は第1トリックの点数札制限なし。
+	AllowPoints FirstTrickPoints = "allow"
+)
+
+// FirstTrickLead は第1トリックのリードの決め方。
+type FirstTrickLead string
+
+const (
+	// LeadOpeningCard は開始カード (♣2) から始める流儀。
+	LeadOpeningCard FirstTrickLead = "opening_card"
+	// LeadFree は ♣2 の持ち主が先手だが出すカードは自由、という流儀。
+	LeadFree FirstTrickLead = "free"
+)
+
+// SetFirstTrickPoints は第1トリックの点数札の扱いを切り替える。
+func (r *Rules) SetFirstTrickPoints(mode FirstTrickPoints) error {
+	ok, err := r.prove(fmt.Sprintf("set_first_trick_points(%s).", mode))
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("第1トリックの点数札の指定が不正です: %q", mode)
+	}
+	return nil
+}
+
+// SetFirstTrickLead は第1トリックのリードの決め方を切り替える。
+func (r *Rules) SetFirstTrickLead(mode FirstTrickLead) error {
+	ok, err := r.prove(fmt.Sprintf("set_first_trick_lead(%s).", mode))
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("第1トリックのリードの指定が不正です: %q", mode)
+	}
+	return nil
+}
+
+// HeartsBreakRule はハートブレイク規則を使うかどうか。
+type HeartsBreakRule string
+
+const (
+	// HeartsBreakOn は得点札 (♥ 全般と ♠Q) が場に出るまで
+	// ハートでリードできない流儀。
+	HeartsBreakOn HeartsBreakRule = "on"
+	// HeartsBreakOff はいつでもハートでリードできる流儀 (既定)。
+	HeartsBreakOff HeartsBreakRule = "off"
+)
+
+// SetHeartsBreakRule はハートブレイク規則の有無を切り替える。
+func (r *Rules) SetHeartsBreakRule(mode HeartsBreakRule) error {
+	ok, err := r.prove(fmt.Sprintf("set_hearts_break_rule(%s).", mode))
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("ハートブレイク規則の指定が不正です: %q", mode)
+	}
+	return nil
+}
+
 // Deck は hearts_rules.pl の deck/1 (hearts.pl の suit/1, rank/1,
 // excluded_cards/1 から生成される)。
 func (r *Rules) Deck() ([]Card, error) {
@@ -287,9 +359,10 @@ func (r *Rules) DetermineWinner(trick []Card, leadSuit string) (Card, error) {
 	return v.W, err
 }
 
-// ContainsHeart はハートブレイクの判定に使う。
-func (r *Rules) ContainsHeart(cards []Card) (bool, error) {
-	return r.prove(fmt.Sprintf("contains_heart(%s).", cardList(cards)))
+// ContainsPointCard は得点札 (ハート全般と ♠Q) が含まれるか。
+// ハートブレイクの判定に使う。
+func (r *Rules) ContainsPointCard(cards []Card) (bool, error) {
+	return r.prove(fmt.Sprintf("contains_point_card(%s).", cardList(cards)))
 }
 
 // CardPoint は hearts.pl の card_point/2。

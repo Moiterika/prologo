@@ -112,9 +112,12 @@ func TestFirstTrickMustLeadTwoOfClubs(t *testing.T) {
 	}
 }
 
-// 第1トリックでは点数札 (♥ と ♠Q) を出せない。
+// 「点数札禁止」を選んだときは第1トリックで ♥ と ♠Q を出せない。
 func TestFirstTrickNoPointCards(t *testing.T) {
 	r := newTestRules(t)
+	if err := r.SetFirstTrickPoints(ForbidAllPoints); err != nil {
+		t.Fatal(err)
+	}
 	lead := c("c", "2")
 
 	// クラブが無く、ハート・♠Q・ダイヤを持っている状況
@@ -138,9 +141,186 @@ func TestFirstTrickNoPointCards(t *testing.T) {
 	}
 }
 
-// ハートブレイク前はハートからリードできない。
+// 第1トリックの流儀を切り替えられる。
+// 台札スートを持っていない状況で、何が出せるようになるかを確かめる。
+func TestFirstTrickPointsModes(t *testing.T) {
+	lead := c("c", "2")
+	hand := []Card{c("h", "3"), c("h", "k"), c("s", "q"), c("d", "7")}
+
+	cases := []struct {
+		mode FirstTrickPoints
+		want []Card
+	}{
+		// 既定: 点数札は出せない
+		{ForbidAllPoints, []Card{c("d", "7")}},
+		// ハートだけ禁止 (♠Q は捨てられる)
+		{ForbidHearts, []Card{c("s", "q"), c("d", "7")}},
+		// 制限なし
+		{AllowPoints, hand},
+	}
+
+	for _, tc := range cases {
+		r := newTestRules(t)
+		if err := r.SetFirstTrickPoints(tc.mode); err != nil {
+			t.Fatalf("%s: %v", tc.mode, err)
+		}
+		legal, err := r.LegalCards(hand, &lead, 1, false)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.mode, err)
+		}
+		got := cardSet(legal)
+		if len(got) != len(tc.want) {
+			t.Errorf("%s: legal_cards = %v; want %v", tc.mode, legal, tc.want)
+			continue
+		}
+		for _, w := range tc.want {
+			if !got[w] {
+				t.Errorf("%s: legal_cards = %v; %v が含まれていません", tc.mode, legal, w)
+			}
+		}
+	}
+}
+
+// 禁止札しか持っていない場合は、出さざるを得ないので許される。
+// 何が「禁止札」かは流儀によって変わることに注意 (forbid_hearts では
+// ♠Q は禁止札ではないので、♠Q を持っていれば逃げ道にならない)。
+func TestFirstTrickAllBannedIsAllowed(t *testing.T) {
+	lead := c("c", "2")
+
+	cases := []struct {
+		mode FirstTrickPoints
+		hand []Card
+	}{
+		{ForbidAllPoints, []Card{c("h", "3"), c("s", "q")}}, // 点数札のみ
+		{ForbidHearts, []Card{c("h", "3"), c("h", "k")}},    // ハートのみ
+	}
+
+	for _, tc := range cases {
+		r := newTestRules(t)
+		if err := r.SetFirstTrickPoints(tc.mode); err != nil {
+			t.Fatal(err)
+		}
+		legal, err := r.LegalCards(tc.hand, &lead, 1, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(legal) != len(tc.hand) {
+			t.Errorf("%s: legal_cards = %v; 逃げ道が無いので %d 枚とも出せるはず",
+				tc.mode, legal, len(tc.hand))
+		}
+	}
+}
+
+// forbid_hearts では ♠Q が「出せるカード」なので、ハートは依然として禁止。
+func TestForbidHeartsKeepsQueenAsEscape(t *testing.T) {
+	r := newTestRules(t)
+	if err := r.SetFirstTrickPoints(ForbidHearts); err != nil {
+		t.Fatal(err)
+	}
+	lead := c("c", "2")
+
+	legal, err := r.LegalCards([]Card{c("h", "3"), c("s", "q")}, &lead, 1, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(legal) != 1 || legal[0] != c("s", "q") {
+		t.Fatalf("legal_cards = %v; ♠Q だけのはず (♠Q が出せるのでハートは禁止のまま)", legal)
+	}
+}
+
+// 第1トリックのリードを自由にできる。
+func TestFirstTrickLeadModes(t *testing.T) {
+	hand := []Card{c("c", "2"), c("c", "9"), c("h", "3"), c("s", "a"), c("s", "q")}
+
+	// 既定: ♣2 しか出せない
+	r := newTestRules(t)
+	legal, err := r.LegalCards(hand, nil, 1, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(legal) != 1 || legal[0] != c("c", "2") {
+		t.Fatalf("legal_cards = %v; ♣2 だけのはず", legal)
+	}
+
+	// 自由リード + 点数札許可 (既定) + ブレイク規則なし (既定):
+	// 手札のどれでも出せる
+	if err := r.SetFirstTrickLead(LeadFree); err != nil {
+		t.Fatal(err)
+	}
+	legal, err = r.LegalCards(hand, nil, 1, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(legal) != len(hand) {
+		t.Fatalf("legal_cards = %v; 手札 %d 枚すべて出せるはず", legal, len(hand))
+	}
+
+	// 自由リード + 点数札禁止: ハートと ♠Q 以外なら何でも
+	if err := r.SetFirstTrickPoints(ForbidAllPoints); err != nil {
+		t.Fatal(err)
+	}
+	legal, err = r.LegalCards(hand, nil, 1, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := cardSet(legal)
+	if len(got) != 3 || !got[c("c", "2")] || !got[c("c", "9")] || !got[c("s", "a")] {
+		t.Fatalf("legal_cards = %v; ♣2 ♣9 ♠A のはず", legal)
+	}
+
+	// 点数札許可に戻す
+	if err := r.SetFirstTrickPoints(AllowPoints); err != nil {
+		t.Fatal(err)
+	}
+
+	// ブレイク規則を使う設定にすると、第1トリックでもハートはリードできない
+	if err := r.SetHeartsBreakRule(HeartsBreakOn); err != nil {
+		t.Fatal(err)
+	}
+	legal, err = r.LegalCards(hand, nil, 1, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got = cardSet(legal)
+	if got[c("h", "3")] {
+		t.Fatalf("legal_cards = %v; ブレイク前なのでハートはリードできないはず", legal)
+	}
+	if len(got) != 4 {
+		t.Fatalf("legal_cards = %v; ハート以外の 4 枚のはず", legal)
+	}
+}
+
+// ブレイクは得点札 (ハート全般と ♠Q) が場に出た時点で起きる。
+func TestContainsPointCard(t *testing.T) {
+	r := newTestRules(t)
+
+	cases := []struct {
+		name  string
+		trick []Card
+		want  bool
+	}{
+		{"得点札なし", []Card{c("c", "2"), c("c", "9"), c("d", "k"), c("s", "3")}, false},
+		{"ハートあり", []Card{c("c", "2"), c("h", "4"), c("c", "9"), c("s", "3")}, true},
+		{"♠Q あり", []Card{c("c", "2"), c("c", "9"), c("s", "q"), c("d", "3")}, true},
+		{"空", nil, false},
+	}
+	for _, tc := range cases {
+		got, err := r.ContainsPointCard(tc.trick)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if got != tc.want {
+			t.Errorf("%s: contains_point_card(%v) = %v; want %v", tc.name, tc.trick, got, tc.want)
+		}
+	}
+}
+
+// ハートブレイク規則を使う設定では、ブレイク前はハートからリードできない。
 func TestCannotLeadHeartsBeforeBreak(t *testing.T) {
 	r := newTestRules(t)
+	if err := r.SetHeartsBreakRule(HeartsBreakOn); err != nil {
+		t.Fatal(err)
+	}
 	hand := []Card{c("h", "3"), c("h", "k"), c("d", "7"), c("s", "q")}
 
 	legal, err := r.LegalCards(hand, nil, 4, false)
@@ -162,9 +342,39 @@ func TestCannotLeadHeartsBeforeBreak(t *testing.T) {
 	}
 }
 
-// 手札がハートだけならブレイク前でもリードできる。
+// ハートブレイク規則を使わない設定 (既定) では、いつでもハートでリードできる。
+func TestHeartsBreakRuleOffAllowsHeartLead(t *testing.T) {
+	r := newTestRules(t)
+	hand := []Card{c("h", "3"), c("h", "k"), c("d", "7"), c("s", "q")}
+
+	// 既定は off
+	legal, err := r.LegalCards(hand, nil, 4, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(legal) != 4 {
+		t.Fatalf("legal_cards = %v; 既定ではブレイク前でも全部リードできるはず", legal)
+	}
+
+	// 明示的に off にしても同じ
+	if err := r.SetHeartsBreakRule(HeartsBreakOff); err != nil {
+		t.Fatal(err)
+	}
+	legal, err = r.LegalCards(hand, nil, 4, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(legal) != 4 {
+		t.Fatalf("legal_cards = %v; off なら全部リードできるはず", legal)
+	}
+}
+
+// 手札がハートだけなら、ブレイク規則を使う設定でもブレイク前にリードできる。
 func TestHeartsOnlyHandMayLead(t *testing.T) {
 	r := newTestRules(t)
+	if err := r.SetHeartsBreakRule(HeartsBreakOn); err != nil {
+		t.Fatal(err)
+	}
 	hand := []Card{c("h", "3"), c("h", "k")}
 
 	legal, err := r.LegalCards(hand, nil, 4, false)
@@ -359,7 +569,7 @@ func TestAIPlaysFullRoundLegally(t *testing.T) {
 			taken[winner] = append(taken[winner], played...)
 
 			if !broken {
-				broken, err = r.ContainsHeart(played)
+				broken, err = r.ContainsPointCard(played)
 				if err != nil {
 					t.Fatal(err)
 				}

@@ -1,0 +1,360 @@
+package view
+
+templ TablePage(vm TableVM) {
+	@Layout("ハート") {
+		@statusBar(vm)
+		if vm.Error != "" {
+			<div class="bg-rose-900/70 border border-rose-500 rounded p-3 text-sm">{ vm.Error }</div>
+		}
+		if vm.Notice != "" {
+			<div class="bg-amber-900/60 border border-amber-500 rounded p-3 text-sm">{ vm.Notice }</div>
+		}
+		switch vm.Phase {
+			case "passing":
+				@scoreStrip(vm)
+				@passSection(vm)
+			case "round_done":
+				@roundResult(vm)
+			case "game_over":
+				@gameOver(vm)
+			default:
+				@tableCircle(vm)
+				if vm.Phase == "trick_done" {
+					@nextTrickBar(vm)
+				}
+				@handSection(vm)
+		}
+	}
+}
+
+// =============================================
+// 上部の状況表示
+// =============================================
+
+templ statusBar(vm TableVM) {
+	<section class="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-emerald-300">
+		<span>第 { itoa(vm.Round) } ラウンド</span>
+		if vm.Phase == "passing" {
+			<span>カード交換</span>
+		} else if vm.TrickTotal > 0 {
+			<span>第 { itoa(vm.TrickNo) } / { itoa(vm.TrickTotal) } トリック</span>
+		}
+		if vm.LeadSuit != "" {
+			<span>台札 <span class="font-bold">{ vm.LeadSuit }</span></span>
+		}
+		if vm.ShowHeartsBreak {
+			if vm.HeartsBroken {
+				<span class="text-rose-400">♥ ブレイク済み</span>
+			} else {
+				<span class="text-emerald-500">♥ 未ブレイク</span>
+			}
+		}
+		<span class="ml-auto text-emerald-500">{ itoa(vm.Limit) } 点で終了</span>
+	</section>
+	<section class="flex flex-wrap gap-2 text-xs text-emerald-500">
+		for _, label := range vm.RuleLabels {
+			<span class="border border-emerald-800 rounded px-2 py-0.5">{ label }</span>
+		}
+	</section>
+}
+
+// scoreStrip は円卓を出さない局面 (カード交換) 用の簡易な得点表示。
+templ scoreStrip(vm TableVM) {
+	<section class="flex flex-wrap gap-2">
+		for _, s := range vm.Seats {
+			<div class="flex items-baseline gap-2 rounded-lg border border-emerald-800 bg-emerald-900/40 px-3 py-1.5">
+				<span class={ "text-sm font-semibold", templ.KV("text-amber-300", s.IsYou) }>{ s.Name }</span>
+				<span class="text-xs text-emerald-400">累計 { itoa(s.Total) }</span>
+			</div>
+		}
+	</section>
+}
+
+// =============================================
+// 円卓
+// =============================================
+// 3x3 のマスに席を配置し、「あなた」を手前 (下) に置く。
+// 出したカードは名札の中央寄りに並べるので、誰が出した札かが分かる。
+
+templ tableCircle(vm TableVM) {
+	<section class="bg-emerald-900/30 border border-emerald-800 rounded-xl p-3 sm:p-5">
+		<div class="grid grid-cols-3 grid-rows-3 gap-2 place-items-center">
+			for _, s := range vm.Seats {
+				<div class={ "flex items-center justify-center gap-2", seatArea(s.Area), seatFlow(s.Area) }>
+					@seatPlate(s)
+					@seatCard(s)
+				</div>
+			}
+			<div class="col-start-2 row-start-2 text-center px-2">
+				<p class="text-sm text-emerald-300">{ vm.CenterText }</p>
+			</div>
+		</div>
+	</section>
+}
+
+// seatPlate は名札。累計失点とこのラウンドの獲得を出す。
+templ seatPlate(s SeatVM) {
+	<div
+		class={ "rounded-lg border px-3 py-2 text-center min-w-24",
+			templ.KV("border-amber-400 bg-emerald-900", s.Turn),
+			templ.KV("border-emerald-800 bg-emerald-900/40", !s.Turn) }
+	>
+		<div class={ "font-semibold text-sm", templ.KV("text-amber-300", s.IsYou) }>{ s.Name }</div>
+		<div class="text-xs text-emerald-400 mt-0.5">累計 { itoa(s.Total) }</div>
+		<div class="text-xs text-emerald-500">
+			本局 { itoa(s.RoundTaken) } 点 / { itoa(s.TakenCount) } 枚
+		</div>
+	</div>
+}
+
+// seatCard はその席がこのトリックで出したカード。
+// まだ出していない席も同じ大きさの枠を置いて、配置がずれないようにする。
+templ seatCard(s SeatVM) {
+	if s.Played != nil {
+		<div class="relative">
+			@cardFace(*s.Played, s.Winner)
+			<span class="absolute -top-1.5 -left-1.5 w-5 h-5 rounded-full bg-emerald-700 text-emerald-50 text-[10px] flex items-center justify-center">
+				{ itoa(s.PlayOrder) }
+			</span>
+			if s.Winner {
+				<span class="absolute -bottom-2 left-1/2 -translate-x-1/2 bg-amber-400 text-emerald-950 text-[10px] font-bold rounded px-1.5">
+					取り
+				</span>
+			}
+		</div>
+	} else {
+		<span class="inline-block w-14 h-20 rounded-md border-2 border-dashed border-emerald-800"></span>
+	}
+}
+
+// =============================================
+// 手札
+// =============================================
+
+templ handSection(vm TableVM) {
+	<section class="bg-emerald-900/40 border border-emerald-800 rounded-lg p-4">
+		<div class="flex items-center justify-between mb-3">
+			<h2 class="text-sm text-emerald-400">あなたの手札</h2>
+			if vm.YourTurn {
+				<span class="text-sm text-amber-300 font-semibold">出すカードを選んでください</span>
+			}
+		</div>
+		<form method="post" action="/play" class="flex flex-wrap gap-2">
+			for _, c := range vm.Hand {
+				if vm.YourTurn {
+					<button
+						type="submit"
+						name="card"
+						value={ itoa(c.Number) }
+						disabled?={ !c.Legal }
+						class={ "transition",
+							templ.KV("hover:-translate-y-2 cursor-pointer", c.Legal),
+							templ.KV("opacity-30 cursor-not-allowed", !c.Legal) }
+					>
+						@cardFace(c, false)
+					</button>
+				} else {
+					<span class="opacity-60">
+						@cardFace(c, false)
+					</span>
+				}
+			}
+		</form>
+		if vm.YourTurn {
+			<p class="text-xs text-emerald-500 mt-3">
+				薄いカードは今のルールでは出せません。
+			</p>
+		}
+	</section>
+}
+
+// =============================================
+// カード 1 枚の見た目
+// =============================================
+
+templ cardFace(c CardVM, highlight bool) {
+	<span
+		class={ "inline-flex flex-col items-center justify-center w-14 h-20 rounded-md bg-white shadow border-2 leading-none select-none",
+			templ.KV("border-amber-400 ring-2 ring-amber-300", highlight),
+			templ.KV("border-slate-300", !highlight),
+			templ.KV("text-rose-600", c.Red),
+			templ.KV("text-slate-900", !c.Red) }
+	>
+		<span class="text-2xl">{ c.Suit }</span>
+		<span class="text-lg font-bold">{ c.Rank }</span>
+	</span>
+}
+
+// =============================================
+// カード交換
+// =============================================
+
+templ passSection(vm TableVM) {
+	<section class="bg-emerald-900/40 border border-emerald-800 rounded-lg p-4">
+		<div class="flex flex-wrap items-baseline gap-x-3 gap-y-1 mb-4">
+			<h2 class="font-semibold">
+				{ vm.PassDir }へ渡すカードを { itoa(vm.PassCount) } 枚選んでください
+			</h2>
+			<p id="pass-status" class="text-sm text-amber-300">
+				あと { itoa(vm.PassCount) } 枚
+			</p>
+		</div>
+		<form method="post" action="/pass" id="pass-form" data-need={ itoa(vm.PassCount) }>
+			<div class="flex flex-wrap gap-2">
+				for _, c := range vm.Hand {
+					<label class="cursor-pointer">
+						<input type="checkbox" name="card" value={ itoa(c.Number) } class="peer sr-only"/>
+						<span class="block rounded-md peer-checked:-translate-y-2 peer-checked:ring-4 peer-checked:ring-amber-400 transition">
+							@cardFace(c, false)
+						</span>
+					</label>
+				}
+			</div>
+			<div class="mt-5 flex justify-center">
+				<button
+					type="submit"
+					class="bg-amber-500 hover:bg-amber-400 disabled:bg-emerald-800 disabled:text-emerald-600 disabled:cursor-not-allowed text-emerald-950 font-bold rounded px-10 py-2"
+				>
+					渡す
+				</button>
+			</div>
+		</form>
+		if len(vm.Received) > 0 {
+			<div class="mt-5 pt-4 border-t border-emerald-800">
+				<h3 class="text-sm text-emerald-400 mb-2">受け取ったカード</h3>
+				<div class="flex flex-wrap gap-2">
+					for _, c := range vm.Received {
+						@cardFace(c, false)
+					}
+				</div>
+			</div>
+		}
+		// 選択枚数がちょうど揃うまで送信ボタンを押せなくする。
+		// このフラグメント内の要素にしか触らないので、htmx の差し替えで
+		// 再評価されても二重に効くことはない。
+		@passScript()
+	</section>
+}
+
+templ passScript() {
+	<script type="text/javascript">
+		(function () {
+			var form = document.getElementById("pass-form");
+			if (!form) return;
+			var need = Number(form.dataset.need || "3");
+			var boxes = form.querySelectorAll('input[name="card"]');
+			var submit = form.querySelector('button[type="submit"]');
+			var status = document.getElementById("pass-status");
+			function sync() {
+				var n = 0;
+				boxes.forEach(function (b) { if (b.checked) n++; });
+				boxes.forEach(function (b) { b.disabled = !b.checked && n >= need; });
+				submit.disabled = n !== need;
+				if (status) {
+					status.textContent = n === need ? "選び終わりました" : "あと " + (need - n) + " 枚";
+				}
+			}
+			boxes.forEach(function (b) { b.addEventListener("change", sync); });
+			sync();
+		})();
+	</script>
+}
+
+// =============================================
+// トリックを進めるボタン
+// =============================================
+
+templ nextTrickBar(vm TableVM) {
+	<section class="flex justify-center">
+		<form method="post" action="/next">
+			<button type="submit" class="bg-emerald-600 hover:bg-emerald-500 rounded px-8 py-2 font-semibold">
+				if vm.TrickNo < vm.TrickTotal {
+					次のトリックへ
+				} else {
+					ラウンドを精算する
+				}
+			</button>
+		</form>
+	</section>
+}
+
+// =============================================
+// ラウンド結果
+// =============================================
+
+templ roundResult(vm TableVM) {
+	<section class="bg-emerald-900/40 border border-emerald-800 rounded-lg p-4">
+		<h2 class="font-semibold mb-3">第 { itoa(vm.Round) } ラウンド結果</h2>
+		if vm.SlammerName != "" {
+			<p class="bg-amber-500 text-emerald-950 font-bold rounded p-3 mb-3">
+				スラム達成！ { vm.SlammerName } が全 { itoa(vm.MaxPoints) } 点を独占したので、
+				本人は 0 点、他の全員が { itoa(vm.MaxPoints) } 点です。
+			</p>
+		}
+		<table class="w-full text-sm">
+			<thead class="text-emerald-400 border-b border-emerald-800">
+				<tr>
+					<th class="text-left py-1">プレイヤー</th>
+					<th class="text-right py-1">獲得</th>
+					<th class="text-right py-1">素点</th>
+					<th class="text-right py-1">このラウンド</th>
+					<th class="text-right py-1">累計</th>
+				</tr>
+			</thead>
+			<tbody>
+				for _, s := range vm.Seats {
+					<tr class="border-b border-emerald-900">
+						<td class={ "py-1", templ.KV("text-amber-300 font-semibold", s.IsYou) }>{ s.Name }</td>
+						<td class="text-right">{ itoa(s.TakenCount) } 枚</td>
+						<td class="text-right">{ itoa(s.RoundTaken) }</td>
+						<td class="text-right font-semibold">+{ itoa(s.RoundDelta) }</td>
+						<td class="text-right">{ itoa(s.Total) }</td>
+					</tr>
+				}
+			</tbody>
+		</table>
+		<form method="post" action="/next" class="mt-4 flex justify-center">
+			<button type="submit" class="bg-emerald-600 hover:bg-emerald-500 rounded px-8 py-2 font-semibold">
+				次へ
+			</button>
+		</form>
+	</section>
+}
+
+// =============================================
+// ゲーム終了
+// =============================================
+
+templ gameOver(vm TableVM) {
+	<section class="bg-emerald-900/40 border border-emerald-800 rounded-lg p-6 text-center space-y-4">
+		<h2 class="text-2xl font-bold">
+			if vm.YouWin {
+				<span class="text-amber-300">あなたの勝ちです！</span>
+			} else {
+				<span>{ vm.WinnerName } の勝ちです</span>
+			}
+		</h2>
+		<table class="w-full max-w-sm mx-auto text-sm">
+			<tbody>
+				for _, s := range vm.Seats {
+					<tr class="border-b border-emerald-900">
+						<td class={ "py-1 text-left", templ.KV("text-amber-300 font-semibold", s.IsYou) }>{ s.Name }</td>
+						<td class="py-1 text-right">{ itoa(s.Total) } 点</td>
+					</tr>
+				}
+			</tbody>
+		</table>
+		<div class="flex flex-wrap gap-3 justify-center">
+			<form method="post" action="/new">
+				<button type="submit" class="bg-amber-500 hover:bg-amber-400 text-emerald-950 font-bold rounded px-8 py-2">
+					同じルールでもう一度
+				</button>
+			</form>
+			<form method="post" action="/setup">
+				<button type="submit" class="border border-emerald-600 hover:bg-emerald-800 rounded px-8 py-2 font-semibold">
+					ルールを選び直す
+				</button>
+			</form>
+		</div>
+	</section>
+}

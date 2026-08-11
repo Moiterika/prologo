@@ -1,38 +1,90 @@
 package main
 
-// game.go — ゲーム進行。
+// game.go — ゲームの状態機械。
 //
-// ルール判定は一切ここで書かず、すべて Rules 経由で Prolog に尋ねる。
-// Go が担当するのはシャッフル・手番の管理・画面表示だけ。
+// 画面や HTTP のことは一切知らない。ルール判定も自分では書かず、
+// すべて Rules 経由で Prolog (hearts.pl とその上のレイヤ) に尋ねる。
+// ここにあるのは「今どの局面か」「次に何が起きるか」の管理だけ。
 
 import (
 	"errors"
 	"fmt"
 	"math/rand"
-	"strings"
+	"sort"
 )
+
+// Phase は今プレイヤーに何を求めている局面か。
+type Phase string
+
+const (
+	PhasePassing   Phase = "passing"    // カード交換の選択待ち
+	PhasePlaying   Phase = "playing"    // 出すカードの選択待ち
+	PhaseTrickDone Phase = "trick_done" // トリック終了、次へ進む待ち
+	PhaseRoundDone Phase = "round_done" // ラウンド終了、次へ進む待ち
+	PhaseGameOver  Phase = "game_over"  // ゲーム終了
+)
+
+// HumanSeat は人間のプレイヤー番号。残りは CPU。
+const HumanSeat = 0
+
+// ErrPlayerInput は「入力がルール上おかしい」ことを表す。
+// サーバーはこれを 500 ではなく画面上のメッセージとして扱う。
+type ErrPlayerInput struct{ Msg string }
+
+func (e ErrPlayerInput) Error() string { return e.Msg }
+
+func inputErr(format string, a ...interface{}) error {
+	return ErrPlayerInput{Msg: fmt.Sprintf(format, a...)}
+}
 
 // Game は 1 ゲーム分の状態。
 type Game struct {
-	rules     *Rules
-	ui        *UI
-	rng       *rand.Rand
+	rules *Rules
+	rng   *rand.Rand
+	opts  Options
+
 	players   int
 	handSize  int
 	passCount int
 	maxPoints int // 1 ラウンドの失点総和 (通常 26)
-	names     []string
-	scores    []int
-	limit     int
-	humanSeat int
-	auto      bool
+	limit     int // この失点に達したら終了
+
+	names  []string
+	scores []int
+
+	round    int
+	phase    Phase
+	hands    [][]Card
+	taken    [][]Card
+	passDir  string
+	received []Card // 人間が交換で受け取ったカード
+
+	trickNo  int
+	leader   int
+	turn     int
+	played   []Card
+	playedBy []int
+	lead     *Card
+	broken   bool
+
+	// 直前のトリックの結果 (PhaseTrickDone のときに使う)
+	trickWinner int
+	trickPoints int
+
+	// 直前のラウンドの結果 (PhaseRoundDone のときに使う)
+	roundFinal   []int
+	roundSlammer int
+
+	notice string // ハートブレイクなどの一時メッセージ
 }
 
-// errQuit は入力が閉じられたことを表す。
-var errQuit = errors.New("入力が終了しました")
+// NewGame は選んだ流儀を Prolog に反映し、人数・手札枚数などを取得して
+// ゲームを開始する。
+func NewGame(rules *Rules, rng *rand.Rand, limit int, opts Options) (*Game, error) {
+	if err := opts.Apply(rules); err != nil {
+		return nil, err
+	}
 
-// NewGame は Prolog から人数・手札枚数などを取得してゲームを組み立てる。
-func NewGame(rules *Rules, ui *UI, rng *rand.Rand, limit int, auto bool) (*Game, error) {
 	players, err := rules.TotalPlayers()
 	if err != nil {
 		return nil, err
@@ -51,139 +103,278 @@ func NewGame(rules *Rules, ui *UI, rng *rand.Rand, limit int, auto bool) (*Game,
 	}
 
 	names := make([]string, players)
-	names[0] = "あなた"
+	names[HumanSeat] = "あなた"
 	for i := 1; i < players; i++ {
 		names[i] = fmt.Sprintf("CPU%d", i)
 	}
 
-	return &Game{
-		rules:     rules,
-		ui:        ui,
-		rng:       rng,
-		players:   players,
-		handSize:  handSize,
-		passCount: passCount,
-		maxPoints: maxPoints,
-		names:     names,
-		scores:    make([]int, players),
-		limit:     limit,
-		humanSeat: 0,
-		auto:      auto,
-	}, nil
+	g := &Game{
+		rules:        rules,
+		rng:          rng,
+		opts:         opts,
+		players:      players,
+		handSize:     handSize,
+		passCount:    passCount,
+		maxPoints:    maxPoints,
+		limit:        limit,
+		names:        names,
+		scores:       make([]int, players),
+		round:        1,
+		roundSlammer: -1,
+	}
+	if err := g.startRound(); err != nil {
+		return nil, err
+	}
+	return g, nil
 }
 
-// Run はゲーム全体を進行する。
-func (g *Game) Run() error {
-	if err := g.showIntro(); err != nil {
-		return err
+// =============================================
+// 参照 (画面を組み立てる側から読む)
+// =============================================
+
+func (g *Game) Phase() Phase       { return g.phase }
+func (g *Game) Round() int         { return g.round }
+func (g *Game) Names() []string    { return g.names }
+func (g *Game) Scores() []int      { return g.scores }
+func (g *Game) Limit() int         { return g.limit }
+func (g *Game) MaxPoints() int     { return g.maxPoints }
+func (g *Game) PassCount() int     { return g.passCount }
+func (g *Game) PassDir() string    { return g.passDir }
+func (g *Game) Received() []Card   { return g.received }
+func (g *Game) TrickNo() int       { return g.trickNo }
+func (g *Game) TrickTotal() int    { return g.handSize }
+func (g *Game) Played() []Card     { return g.played }
+func (g *Game) PlayedBy() []int    { return g.playedBy }
+func (g *Game) Lead() *Card        { return g.lead }
+func (g *Game) HeartsBroken() bool { return g.broken }
+func (g *Game) TrickWinner() int   { return g.trickWinner }
+func (g *Game) TrickPoints() int   { return g.trickPoints }
+func (g *Game) RoundFinal() []int  { return g.roundFinal }
+func (g *Game) RoundSlammer() int  { return g.roundSlammer }
+func (g *Game) Notice() string     { return g.notice }
+func (g *Game) Players() int       { return g.players }
+func (g *Game) Options() Options   { return g.opts }
+
+// YourTurn は人間の入力を待っているか。
+func (g *Game) YourTurn() bool {
+	return g.phase == PhasePlaying && g.turn == HumanSeat
+}
+
+// Hand は人間の手札を表示順 (♠♥♦♣、各スート内は強い順) で返す。
+// 画面の番号はこの並びの 1 始まりの位置。
+func (g *Game) Hand() []Card {
+	return g.sortForDisplay(g.hands[HumanSeat])
+}
+
+// LegalCards は今この瞬間に人間が出せるカード。
+func (g *Game) LegalCards() ([]Card, error) {
+	if !g.YourTurn() {
+		return nil, nil
 	}
+	return g.rules.LegalCards(g.hands[HumanSeat], g.lead, g.trickNo, g.broken)
+}
 
-	for round := 1; ; round++ {
-		if err := g.playRound(round); err != nil {
-			return err
-		}
-
-		g.ui.showScoreTable(g.names, g.scores, g.limit)
-
-		over, err := g.rules.GameOver(g.scores, g.limit)
+// TakenPoints は各プレイヤーがこのラウンドで取った失点。
+func (g *Game) TakenPoints() ([]int, error) {
+	out := make([]int, g.players)
+	for i := range out {
+		p, err := g.rules.CalculateScore(g.taken[i])
 		if err != nil {
-			return err
+			return nil, err
 		}
-		if over {
-			break
-		}
-		g.ui.pause()
+		out[i] = p
 	}
-
-	g.showResult()
-	return nil
+	return out, nil
 }
 
-func (g *Game) showIntro() error {
-	u := g.ui
-	u.println()
-	u.println(u.paint(ansiBold, "==========  ハーツ (Hearts)  =========="))
-	u.println("  ルール判定は Prolog (hearts.pl) が行っています。")
-	u.println()
-	opening, err := g.rules.OpeningCard()
-	if err != nil {
-		return err
+// TakenCounts は各プレイヤーがこのラウンドで取った枚数。
+func (g *Game) TakenCounts() []int {
+	out := make([]int, g.players)
+	for i := range out {
+		out[i] = len(g.taken[i])
 	}
-
-	u.printf("  ・%d 人でプレイ (あなた + CPU %d 人)\n", g.players, g.players-1)
-	u.printf("  ・ハート1枚 = 1点、スペードのQ = 13点。失点は少ないほど良い。\n")
-	u.printf("  ・台札と同じスートを持っていたら必ずそれを出す (マストフォロー)\n")
-	u.printf("  ・第1トリックは %s スタート。点数札は出せない。\n", u.cardText(opening))
-	u.printf("  ・ハートが場に出るまで、ハートからはリードできない。\n")
-	u.printf("  ・1人で全 %d 点を取ると「スラム」で他全員が %d 点。\n", g.maxPoints, g.maxPoints)
-	u.printf("  ・誰かが %d 点に達したら終了。最少失点の人が勝ち。\n", g.limit)
-	u.println()
-	g.ui.pause()
-	return nil
+	return out
 }
 
-func (g *Game) showResult() {
-	u := g.ui
+// Winner は最少失点のプレイヤー。
+func (g *Game) Winner() int {
 	best := 0
 	for i, s := range g.scores {
 		if s < g.scores[best] {
 			best = i
 		}
 	}
-	u.println(u.paint(ansiBold, "==========  ゲーム終了  =========="))
-	if best == g.humanSeat {
-		u.printf("  %s\n", u.paint(ansiGreen, "あなたの勝ちです！おめでとうございます。"))
-	} else {
-		u.printf("  勝者: %s (%d点)\n", g.names[best], g.scores[best])
-	}
-	u.println()
+	return best
+}
+
+// sortForDisplay は ♠♥♦♣ の順、各スート内はランクの強い順に並べる。
+// 強さは hearts.pl の rank_value/2 に由来する。
+func (g *Game) sortForDisplay(cards []Card) []Card {
+	out := append([]Card(nil), cards...)
+	suitRank := map[string]int{"s": 0, "h": 1, "d": 2, "c": 3}
+	sort.SliceStable(out, func(i, j int) bool {
+		if suitRank[out[i].Suit] != suitRank[out[j].Suit] {
+			return suitRank[out[i].Suit] < suitRank[out[j].Suit]
+		}
+		return g.rules.RankValue(out[i].Rank) > g.rules.RankValue(out[j].Rank)
+	})
+	return out
 }
 
 // =============================================
-// 1 ラウンド
+// プレイヤーからの操作
 // =============================================
 
-func (g *Game) playRound(round int) error {
-	u := g.ui
-	u.println()
-	u.println(u.paint(ansiBold, fmt.Sprintf("########## 第 %d ラウンド ##########", round)))
+// SubmitPass は人間が選んだ交換カード (手札の表示番号) を受け取る。
+func (g *Game) SubmitPass(numbers []int) error {
+	if g.phase != PhasePassing {
+		return inputErr("今はカードを交換する場面ではありません。")
+	}
+	shown := g.Hand()
+	if len(numbers) != g.passCount {
+		return inputErr("渡すカードを %d 枚選んでください。", g.passCount)
+	}
+	seen := map[int]bool{}
+	picked := make([]Card, 0, len(numbers))
+	for _, n := range numbers {
+		if n < 1 || n > len(shown) || seen[n] {
+			return inputErr("カードの選び方が正しくありません。")
+		}
+		seen[n] = true
+		picked = append(picked, shown[n-1])
+	}
 
+	selected := make([][]Card, g.players)
+	selected[HumanSeat] = picked
+	for i := 0; i < g.players; i++ {
+		if i == HumanSeat {
+			continue
+		}
+		cards, err := g.rules.ChoosePass(g.hands[i], g.passCount)
+		if err != nil {
+			return err
+		}
+		selected[i] = cards
+	}
+
+	// 全員同時に渡す
+	for i := 0; i < g.players; i++ {
+		for _, c := range selected[i] {
+			g.hands[i] = removeCard(g.hands[i], c)
+		}
+	}
+	g.received = nil
+	for i := 0; i < g.players; i++ {
+		to, err := g.rules.PassTarget(i, g.passDir, g.players)
+		if err != nil {
+			return err
+		}
+		g.hands[to] = append(g.hands[to], selected[i]...)
+		if to == HumanSeat {
+			g.received = append(g.received, selected[i]...)
+		}
+	}
+	g.received = g.sortForDisplay(g.received)
+
+	return g.startTricks()
+}
+
+// PlayCard は人間が選んだカード (手札の表示番号) を場に出す。
+func (g *Game) PlayCard(number int) error {
+	if g.phase != PhasePlaying {
+		return inputErr("今はカードを出す場面ではありません。")
+	}
+	if g.turn != HumanSeat {
+		return inputErr("今はあなたの手番ではありません。")
+	}
+	shown := g.Hand()
+	if number < 1 || number > len(shown) {
+		return inputErr("そのカードは手札にありません。")
+	}
+	card := shown[number-1]
+
+	ok, err := g.rules.IsLegal(g.hands[HumanSeat], g.lead, g.trickNo, g.broken, card)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		reason, err := g.explainIllegal(card)
+		if err != nil {
+			return err
+		}
+		return ErrPlayerInput{Msg: reason}
+	}
+
+	g.notice = ""
+	if err := g.commit(HumanSeat, card); err != nil {
+		return err
+	}
+	return g.advance()
+}
+
+// Next はトリック終了・ラウンド終了の画面から先へ進める。
+func (g *Game) Next() error {
+	switch g.phase {
+	case PhaseTrickDone:
+		if g.trickNo < g.handSize {
+			g.trickNo++
+			g.leader = g.trickWinner
+			g.turn = g.leader
+			g.played = nil
+			g.playedBy = nil
+			g.lead = nil
+			g.notice = ""
+			g.phase = PhasePlaying
+			return g.advance()
+		}
+		return g.finishRound()
+
+	case PhaseRoundDone:
+		over, err := g.rules.GameOver(g.scores, g.limit)
+		if err != nil {
+			return err
+		}
+		if over {
+			g.phase = PhaseGameOver
+			return nil
+		}
+		g.round++
+		return g.startRound()
+	}
+	return nil
+}
+
+// =============================================
+// 内部の進行
+// =============================================
+
+func (g *Game) startRound() error {
 	hands, err := g.deal()
 	if err != nil {
 		return err
 	}
+	g.hands = hands
+	g.taken = make([][]Card, g.players)
+	g.broken = false
+	g.notice = ""
+	g.received = nil
+	g.roundFinal = nil
+	g.roundSlammer = -1
+	g.played = nil
+	g.playedBy = nil
+	g.lead = nil
+	g.trickNo = 1
 
-	if err := g.passPhase(round, hands); err != nil {
-		return err
-	}
-
-	taken, err := g.playTricks(hands)
+	dir, err := g.rules.PassDirection(g.round)
 	if err != nil {
 		return err
 	}
+	g.passDir = dir
 
-	// 精算は hearts.pl の calculate_score/2 + スラム判定
-	final, slammer, err := g.rules.RoundScores(taken)
-	if err != nil {
-		return err
+	if dir == "hold" {
+		return g.startTricks()
 	}
-
-	u.println()
-	u.println(u.paint(ansiBold, "--- ラウンド結果 ---"))
-	if slammer >= 0 {
-		u.printf("  %s\n", u.paint(ansiGreen,
-			fmt.Sprintf("スラム達成！ %sが全 %d 点を独占しました。",
-				g.names[slammer], g.maxPoints)))
-	}
-	for i := range g.names {
-		points, err := g.rules.CalculateScore(taken[i])
-		if err != nil {
-			return err
-		}
-		g.scores[i] += final[i]
-		u.printf("  %s 獲得 %2d 枚 / 素点 %2d  このラウンド %+3d 点\n",
-			u.pad(g.names[i], 8), len(taken[i]), points, final[i])
-	}
+	g.phase = PhasePassing
 	return nil
 }
 
@@ -213,297 +404,167 @@ func (g *Game) deal() ([][]Card, error) {
 	return hands, nil
 }
 
-// =============================================
-// カード交換 (パス)
-// =============================================
-
-func (g *Game) passPhase(round int, hands [][]Card) error {
-	u := g.ui
-
-	dir, err := g.rules.PassDirection(round)
+// startTricks は開始カード (♣2) の持ち主を先手にしてトリックプレイに入る。
+func (g *Game) startTricks() error {
+	opening, err := g.rules.OpeningCard()
 	if err != nil {
 		return err
 	}
-	if dir == "hold" {
-		u.printf("\n今回は %s のラウンドです。\n", u.paint(ansiCyan, "交換なし"))
+	leader := -1
+	for i, hand := range g.hands {
+		for _, c := range hand {
+			if c == opening {
+				leader = i
+			}
+		}
+	}
+	if leader < 0 {
+		return fmt.Errorf("開始カード %v が誰の手札にもありません", opening)
+	}
+
+	g.leader = leader
+	g.turn = leader
+	g.trickNo = 1
+	g.played = nil
+	g.playedBy = nil
+	g.lead = nil
+	g.phase = PhasePlaying
+	return g.advance()
+}
+
+// advance は人間の手番になるかトリックが揃うまで CPU を進める。
+func (g *Game) advance() error {
+	if g.phase != PhasePlaying {
 		return nil
 	}
-
-	u.printf("\nカード交換: %s %s\n",
-		u.paint(ansiCyan, passDirName[dir]),
-		fmt.Sprintf("(%d枚)", g.passCount))
-
-	selected := make([][]Card, g.players)
-	for i := 0; i < g.players; i++ {
-		if i == g.humanSeat && !g.auto {
-			picked, err := g.askHumanPass(hands[i])
-			if err != nil {
-				return err
-			}
-			selected[i] = picked
-		} else {
-			picked, err := g.rules.ChoosePass(hands[i], g.passCount)
-			if err != nil {
-				return err
-			}
-			selected[i] = picked
-		}
-	}
-
-	// 全員同時に渡す
-	for i := 0; i < g.players; i++ {
-		for _, c := range selected[i] {
-			hands[i] = removeCard(hands[i], c)
-		}
-	}
-	for i := 0; i < g.players; i++ {
-		to, err := g.rules.PassTarget(i, dir, g.players)
-		if err != nil {
+	for len(g.played) < g.players && g.turn != HumanSeat {
+		if err := g.cpuPlay(g.turn); err != nil {
 			return err
 		}
-		hands[to] = append(hands[to], selected[i]...)
-
-		if to == g.humanSeat {
-			var texts []string
-			for _, c := range selected[i] {
-				texts = append(texts, strings.TrimSpace(u.cardCell(c)))
-			}
-			u.printf("  %s から受け取りました: %s\n", g.names[i], strings.Join(texts, " "))
-		}
 	}
-	if !g.auto {
-		u.println()
-		u.showHand(hands[g.humanSeat], nil)
-		g.ui.pause()
+	if len(g.played) == g.players {
+		return g.resolveTrick()
 	}
 	return nil
 }
 
-func (g *Game) askHumanPass(hand []Card) ([]Card, error) {
-	u := g.ui
-	u.println()
-	shown := u.showHand(hand, nil)
-	nums, err := u.askInts(
-		fmt.Sprintf("渡す %d 枚の番号を入力してください (例: 1 5 12) >", g.passCount),
-		g.passCount, 1, len(shown))
+func (g *Game) cpuPlay(pi int) error {
+	card, err := g.rules.ChooseCard(g.hands[pi], g.lead, g.played, g.trickNo, g.broken)
 	if err != nil {
-		return nil, errQuit
+		return err
 	}
-	picked := make([]Card, 0, len(nums))
-	for _, n := range nums {
-		picked = append(picked, shown[n-1])
-	}
-	return picked, nil
+	return g.commit(pi, card)
 }
 
-// =============================================
-// トリックプレイ
-// =============================================
-
-func (g *Game) playTricks(hands [][]Card) ([][]Card, error) {
-	u := g.ui
-
-	taken := make([][]Card, g.players)
-	broken := false
-
-	leader, err := g.openingLeader(hands)
+// commit は 1 枚を場に出す。人間の入力も CPU の出力も、最後に必ず
+// hearts.pl の規則を通るかどうかを確かめてから反映する。
+func (g *Game) commit(pi int, card Card) error {
+	ok, err := g.rules.IsLegal(g.hands[pi], g.lead, g.trickNo, g.broken, card)
 	if err != nil {
-		return nil, err
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("%s が出そうとした %v は hearts.pl のルールに反します", g.names[pi], card)
 	}
 
-	for trickNo := 1; trickNo <= g.handSize; trickNo++ {
-		var (
-			played  []Card
-			players []int
-			lead    *Card
-		)
-
-		for k := 0; k < g.players; k++ {
-			pi := (leader + k) % g.players
-
-			legal, err := g.rules.LegalCards(hands[pi], lead, trickNo, broken)
-			if err != nil {
-				return nil, err
-			}
-			if len(legal) == 0 {
-				return nil, fmt.Errorf("%s に出せるカードがありません (Prolog の legal_cards/5 が空)", g.names[pi])
-			}
-
-			var card Card
-			if pi == g.humanSeat && !g.auto {
-				u.println()
-				u.showTrick(g.names, players, played, trickNo, g.handSize)
-				card, err = g.askHumanPlay(hands[pi], legal, lead, trickNo, broken)
-				if err != nil {
-					return nil, err
-				}
-			} else {
-				card, err = g.rules.ChooseCard(hands[pi], lead, played, trickNo, broken)
-				if err != nil {
-					return nil, err
-				}
-			}
-
-			// 念のため Prolog に最終確認 (人間の入力・AI の出力の両方を検査)
-			ok, err := g.rules.IsLegal(hands[pi], lead, trickNo, broken, card)
-			if err != nil {
-				return nil, err
-			}
-			if !ok {
-				return nil, fmt.Errorf("%s が出そうとした %s は hearts.pl のルールに反します",
-					g.names[pi], u.cardText(card))
-			}
-
-			hands[pi] = removeCard(hands[pi], card)
-			played = append(played, card)
-			players = append(players, pi)
-			if k == 0 {
-				c := card
-				lead = &c
-			}
-		}
-
-		// 勝者判定は hearts.pl の determine_winner/3
-		winCard, err := g.rules.DetermineWinner(played, lead.Suit)
-		if err != nil {
-			return nil, err
-		}
-		winner := players[indexOfCard(played, winCard)]
-		taken[winner] = append(taken[winner], played...)
-
-		justBroke := false
-		if !broken {
-			broken, err = g.rules.ContainsHeart(played)
-			if err != nil {
-				return nil, err
-			}
-			justBroke = broken
-		}
-
-		trickPoints, err := g.rules.CalculateScore(played)
-		if err != nil {
-			return nil, err
-		}
-
-		u.println()
-		u.showTrick(g.names, players, played, trickNo, g.handSize)
-		u.printf("  %s %sが取りました (%d点)\n",
-			strings.TrimSpace(u.arrow()), u.paint(ansiBold, g.names[winner]), trickPoints)
-
-		if err := g.showRoundProgress(taken); err != nil {
-			return nil, err
-		}
-		if justBroke {
-			u.printf("  %s\n", u.paint(ansiRed, "※ ハートブレイク！ 以降はハートでリードできます。"))
-		}
-
-		leader = winner
-		if trickNo < g.handSize {
-			g.ui.pause()
-		}
+	g.hands[pi] = removeCard(g.hands[pi], card)
+	g.played = append(g.played, card)
+	g.playedBy = append(g.playedBy, pi)
+	if len(g.played) == 1 {
+		c := card
+		g.lead = &c
 	}
-
-	return taken, nil
-}
-
-// showRoundProgress はラウンド中の失点経過を表示する。
-func (g *Game) showRoundProgress(taken [][]Card) error {
-	var parts []string
-	for i := range g.names {
-		p, err := g.rules.CalculateScore(taken[i])
-		if err != nil {
-			return err
-		}
-		parts = append(parts, fmt.Sprintf("%s %d", g.names[i], p))
-	}
-	g.ui.printf("  %s\n", g.ui.paint(ansiDim, "経過失点: "+strings.Join(parts, " / ")))
+	g.turn = (pi + 1) % g.players
 	return nil
 }
 
-func (g *Game) askHumanPlay(hand, legal []Card, lead *Card, trickNo int, broken bool) (Card, error) {
-	u := g.ui
-	shown := u.showHand(hand, legal)
+func (g *Game) resolveTrick() error {
+	// 勝者判定は hearts.pl の determine_winner/3
+	win, err := g.rules.DetermineWinner(g.played, g.lead.Suit)
+	if err != nil {
+		return err
+	}
+	winner := g.playedBy[indexOfCard(g.played, win)]
+	g.taken[winner] = append(g.taken[winner], g.played...)
+	g.trickWinner = winner
 
-	legalSet := map[Card]bool{}
-	for _, c := range legal {
-		legalSet[c] = true
+	g.trickPoints, err = g.rules.CalculateScore(g.played)
+	if err != nil {
+		return err
 	}
 
-	for {
-		n, err := u.askInt("出すカードの番号 >", 1, len(shown))
+	if !g.broken {
+		g.broken, err = g.rules.ContainsPointCard(g.played)
 		if err != nil {
-			return Card{}, errQuit
+			return err
 		}
-		card := shown[n-1]
-		if !legalSet[card] {
-			reason, err := g.explainIllegal(card, legal, lead, trickNo, broken)
-			if err != nil {
-				return Card{}, err
-			}
-			u.printf("  %s は今は出せません: %s\n", u.cardText(card), reason)
-			continue
+		// ブレイク規則を使わない設定では、知らせても意味が無い。
+		if g.broken && g.opts.UsesHeartsBreak() {
+			g.notice = "ハートブレイク！ 得点札が出たので、以降はハートでリードできます。"
 		}
-		return card, nil
 	}
+
+	g.phase = PhaseTrickDone
+	return nil
+}
+
+func (g *Game) finishRound() error {
+	// 精算は hearts.pl の calculate_score/2 + スラム判定
+	final, slammer, err := g.rules.RoundScores(g.taken)
+	if err != nil {
+		return err
+	}
+	for i := range g.scores {
+		g.scores[i] += final[i]
+	}
+	g.roundFinal = final
+	g.roundSlammer = slammer
+	g.phase = PhaseRoundDone
+	return nil
 }
 
 // explainIllegal は出せない理由を日本語で説明する。
 // 判定そのものは Prolog が済ませているので、ここは案内文だけを組み立てる。
-func (g *Game) explainIllegal(card Card, legal []Card, lead *Card, trickNo int, broken bool) (string, error) {
-	// 第1トリックのリードは開始カード固定
-	if trickNo == 1 && lead == nil {
+func (g *Game) explainIllegal(card Card) (string, error) {
+	if g.trickNo == 1 && g.lead == nil && g.opts.FirstTrickLead == LeadOpeningCard {
 		opening, err := g.rules.OpeningCard()
 		if err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("第1トリックは %s から始めます", g.ui.cardText(opening)), nil
+		return fmt.Sprintf("第1トリックは %s から始めます。", CardLabel(opening)), nil
 	}
 
-	// マストフォロー
-	if lead != nil && card.Suit != lead.Suit {
-		for _, c := range legal {
-			if c.Suit == lead.Suit {
-				return fmt.Sprintf("台札は%sです。%sを持っているので必ず出してください",
-					suitName[lead.Suit], suitName[lead.Suit]), nil
+	if g.lead != nil && card.Suit != g.lead.Suit {
+		for _, c := range g.hands[HumanSeat] {
+			if c.Suit == g.lead.Suit {
+				return fmt.Sprintf("台札は%sです。%sを持っているので必ず出してください。",
+					SuitName(g.lead.Suit), SuitName(g.lead.Suit)), nil
 			}
 		}
 	}
 
-	// 第1トリックの点数札
-	if trickNo == 1 {
-		p, err := g.rules.CardPoint(card)
-		if err != nil {
-			return "", err
-		}
-		if p > 0 {
-			return "第1トリックでは点数札 (ハート と スペードのQ) を出せません", nil
-		}
-	}
-
-	// ハートブレイク前のハートリード
-	if lead == nil && card.Suit == "h" && !broken {
-		return "まだハートが場に出ていないので、ハートからはリードできません", nil
-	}
-
-	return "ルール上その手は選べません", nil
-}
-
-// openingLeader は第1トリックの開始カード (♣2) を持つプレイヤーを探す。
-func (g *Game) openingLeader(hands [][]Card) (int, error) {
-	opening, err := g.rules.OpeningCard()
-	if err != nil {
-		return 0, err
-	}
-	for i, hand := range hands {
-		for _, c := range hand {
-			if c == opening {
-				g.ui.printf("\n%sが %s を持っているので先手です。\n",
-					g.names[i], strings.TrimSpace(g.ui.cardCell(opening)))
-				return i, nil
+	if g.trickNo == 1 {
+		switch g.opts.FirstTrickPoints {
+		case ForbidAllPoints:
+			p, err := g.rules.CardPoint(card)
+			if err != nil {
+				return "", err
+			}
+			if p > 0 {
+				return "第1トリックでは点数札 (ハートとスペードのQ) を出せません。", nil
+			}
+		case ForbidHearts:
+			if card.Suit == "h" {
+				return "第1トリックではハートを出せません。", nil
 			}
 		}
 	}
-	return 0, fmt.Errorf("開始カード %s が誰の手札にもありません", g.ui.cardText(opening))
+
+	if g.lead == nil && card.Suit == "h" && !g.broken && g.opts.UsesHeartsBreak() {
+		return "まだ得点札が場に出ていないので、ハートからはリードできません。", nil
+	}
+
+	return "そのカードはルール上出せません。", nil
 }
 
 // =============================================

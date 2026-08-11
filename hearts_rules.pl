@@ -56,9 +56,11 @@ opening_card(card(c, Rank)) :-
 % 4. ハートブレイク判定の補助
 % =============================================
 
-% 出されたカードの中にハートが含まれるか
-contains_heart(Cards) :-
-    member(card(h, _), Cards),
+% 出されたカードの中に得点札 (ハート全般と ♠Q) が含まれるか。
+% これが出た時点で「ブレイク」し、以降ハートでリードできるようになる。
+contains_point_card(Cards) :-
+    member(C, Cards),
+    point_card(C),
     !.
 
 % 手札にハート以外のカードがあるか
@@ -67,47 +69,112 @@ has_non_heart(Hand) :-
     S \== h,
     !.
 
-% 第1トリックで出せる「失点なしカード」を持っているか
-has_safe_card(Hand, Lead) :-
-    can_play(Hand, Lead, C),
-    \+ point_card(C),
-    !.
+% =============================================
+% 4.1 第1トリックの流儀 (ゲーム開始時に選ぶ)
+% =============================================
+
+:- dynamic first_trick_points/1.
+:- dynamic first_trick_lead/1.
+:- dynamic hearts_break_rule/1.
+
+% first_trick_points(Mode)
+%   forbid_all    … 点数札を出せない (ハート全般と ♠Q)  ※ no blood on the first trick
+%   forbid_hearts … ハートだけ出せない (♠Q は出せる)
+%   allow         … 制限なし  ※既定
+first_trick_points(allow).
+
+% first_trick_lead(Mode)
+%   opening_card … 第1トリックは開始カード(♣2)から始める
+%   free         … ♣2 の持ち主が先手だが、出すカードは自由
+first_trick_lead(opening_card).
+
+set_first_trick_points(Mode) :-
+    member(Mode, [forbid_all, forbid_hearts, allow]),
+    retractall(first_trick_points(_)),
+    assertz(first_trick_points(Mode)).
+
+set_first_trick_lead(Mode) :-
+    member(Mode, [opening_card, free]),
+    retractall(first_trick_lead(_)),
+    assertz(first_trick_lead(Mode)).
+
+% hearts_break_rule(Mode)
+%   on  … 得点札 (ハート全般と ♠Q) が場に出るまでハートでリードできない
+%   off … いつでもハートでリードできる  ※既定
+hearts_break_rule(off).
+
+set_hearts_break_rule(Mode) :-
+    member(Mode, [on, off]),
+    retractall(hearts_break_rule(_)),
+    assertz(hearts_break_rule(Mode)).
+
+% 第1トリックで出すのを禁じられているカードか
+first_trick_banned(Card) :-
+    first_trick_points(Mode),
+    banned_on_first_trick(Mode, Card).
+
+banned_on_first_trick(forbid_all, Card) :-
+    point_card(Card).
+banned_on_first_trick(forbid_hearts, card(h, _)).
+% allow のときは該当する節が無いので、何も禁じられない。
 
 % =============================================
 % 5. 合法手 (hearts.pl の can_play/3 に追加制約を重ねる)
 % =============================================
 % legal_play(手札, 台札, トリック番号, ハートブレイク(true/false), 出すカード)
 
-% (a) 第1トリックのリード: 必ず開始カード(2♣)を出す
-legal_play(Hand, nil, 1, _, Card) :-
+% --- 基本の候補 ---
+% リードのときは (ハートブレイク規則が有効なら)「ブレイク前はハートで
+% リードできない」を重ね、フォローのときは hearts.pl のマストフォローを
+% そのまま使う。
+base_play(Hand, nil, Broken, Card) :-
     !,
-    opening_card(Card),
-    member(Card, Hand).
-
-% (b) 第2トリック以降のリード: ハート未ブレイクならハートでリードできない
-%     (手札がハートのみの場合は例外)
-legal_play(Hand, nil, _, Broken, Card) :-
-    !,
-    (   ( Broken == true ; \+ has_non_heart(Hand) )
+    (   heart_lead_allowed(Hand, Broken)
     ->  can_play(Hand, nil, Card)
     ;   can_play(Hand, nil, Card),
         Card = card(Suit, _),
         Suit \== h
     ).
+base_play(Hand, Lead, _, Card) :-
+    can_play(Hand, Lead, Card).
 
-% (c) 第1トリックのフォロー: 失点カードは出せない
-%     (失点カードしか出せない場合は例外)
-legal_play(Hand, Lead, 1, _, Card) :-
+% ハートでリードしてよいか。
+% 規則を使わない設定、既に得点札が出ている、手札がハートだけ、のいずれか。
+heart_lead_allowed(_, _) :-
+    hearts_break_rule(off),
+    !.
+heart_lead_allowed(_, Broken) :-
+    Broken == true,
+    !.
+heart_lead_allowed(Hand, _) :-
+    \+ has_non_heart(Hand).
+
+% --- 第1トリック ---
+% 禁じられていないカードを持っているなら、それしか出せない。
+% 禁じられたカードしか無い場合は出さざるを得ないので許す。
+first_trick_play(Hand, nil, _, Card) :-
+    first_trick_lead(opening_card),
     !,
-    (   has_safe_card(Hand, Lead)
-    ->  can_play(Hand, Lead, Card),
-        \+ point_card(Card)
-    ;   can_play(Hand, Lead, Card)
+    opening_card(Card),
+    member(Card, Hand).
+first_trick_play(Hand, Lead, Broken, Card) :-
+    (   has_unbanned_card(Hand, Lead, Broken)
+    ->  base_play(Hand, Lead, Broken, Card),
+        \+ first_trick_banned(Card)
+    ;   base_play(Hand, Lead, Broken, Card)
     ).
 
-% (d) 通常のフォロー: hearts.pl のマストフォロー規則そのまま
-legal_play(Hand, Lead, _, _, Card) :-
-    can_play(Hand, Lead, Card).
+has_unbanned_card(Hand, Lead, Broken) :-
+    base_play(Hand, Lead, Broken, C),
+    \+ first_trick_banned(C),
+    !.
+
+% --- まとめ ---
+legal_play(Hand, Lead, TrickNo, Broken, Card) :-
+    (   TrickNo =:= 1
+    ->  first_trick_play(Hand, Lead, Broken, Card)
+    ;   base_play(Hand, Lead, Broken, Card)
+    ).
 
 % 合法手の一覧
 legal_cards(Hand, Lead, TrickNo, Broken, Cards) :-

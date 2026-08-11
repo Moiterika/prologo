@@ -1,0 +1,66 @@
+package view
+
+templ SetupPage(vm SetupVM) {
+	@Layout("ハート — ルール設定") {
+		<section class="bg-emerald-900/40 border border-emerald-800 rounded-lg p-6 space-y-6">
+			<div>
+				<h2 class="text-xl font-bold">ルールを選んでください</h2>
+				<p class="text-sm text-emerald-400 mt-1">
+					第1トリック (1巡目) の扱いは流儀が分かれます。好みのものを選んでください。
+				</p>
+			</div>
+			<form method="post" action="/start" class="space-y-6">
+				<fieldset class="space-y-2">
+					<legend class="font-semibold mb-2">第1トリックのリード</legend>
+					for _, o := range vm.LeadOptions {
+						@radio("lead", o)
+					}
+				</fieldset>
+				<fieldset class="space-y-2">
+					<legend class="font-semibold mb-2">第1トリックに点数札を出せるか</legend>
+					for _, o := range vm.PointsOptions {
+						@radio("points", o)
+					}
+				</fieldset>
+				<fieldset class="space-y-2">
+					<legend class="font-semibold mb-2">ハートブレイク（得点札が出るまで♥をリードできない）</legend>
+					for _, o := range vm.HeartsBreakOptions {
+						@radio("hearts_break", o)
+					}
+				</fieldset>
+				<button
+					type="submit"
+					class="bg-amber-500 hover:bg-amber-400 text-emerald-950 font-bold rounded px-8 py-2"
+				>
+					このルールで始める
+				</button>
+			</form>
+			<div class="text-xs text-emerald-500 border-t border-emerald-800 pt-4 space-y-1">
+				<p>これ以外の規則は共通です。</p>
+				<ul class="list-disc list-inside space-y-0.5">
+					<li>♥ 1 枚 = 1 点、♠Q = 13 点。失点が少ないほど良い</li>
+					<li>台札と同じスートを持っていたら必ず出す (マストフォロー)</li>
+					<li>毎ラウンド 3 枚交換 (左 → 右 → 向かい → 交換なし)</li>
+					<li>1 人で全 { itoa(vm.MaxPoints) } 点を取るとスラム (本人 0 点、他全員 { itoa(vm.MaxPoints) } 点)</li>
+					<li>誰かが { itoa(vm.Limit) } 点に達したら終了</li>
+				</ul>
+			</div>
+		</section>
+	}
+}
+
+templ radio(name string, o OptionVM) {
+	<label class="flex items-start gap-3 rounded-lg border border-emerald-800 bg-emerald-950/40 p-3 cursor-pointer hover:border-emerald-600 has-[:checked]:border-amber-400 has-[:checked]:bg-emerald-900">
+		<input
+			type="radio"
+			name={ name }
+			value={ o.Value }
+			checked?={ o.Checked }
+			class="mt-1 accent-amber-400"
+		/>
+		<span>
+			<span class="font-semibold block">{ o.Label }</span>
+			<span class="text-sm text-emerald-400">{ o.Description }</span>
+		</span>
+	</label>
+}

@@ -1,0 +1,41 @@
+package view
+
+templ Layout(title string) {
+	<!DOCTYPE html>
+	<html lang="ja">
+		<head>
+			<meta charset="utf-8"/>
+			<meta name="viewport" content="width=device-width, initial-scale=1"/>
+			<title>{ title }</title>
+			<script src="https://cdn.tailwindcss.com"></script>
+			<script src="https://unpkg.com/htmx.org@2.0.4"></script>
+		</head>
+		// 画面の差し替えは htmx で #app の中だけ行う。
+		// hx-boost がフォームと a も拾うので、テンプレート側は素の
+		// <form method="post"> を書けばよい。JavaScript を切っても遊べる。
+		//
+		// hx-push-url="false" が要る。既定では POST 先の URL (/play など) が
+		// アドレス欄に載ってしまい、そこでリロードすると GET /play になる。
+		// ゲームの状態はすべてサーバー側にあり履歴に意味が無いので、
+		// URL は "/" のまま動かさない。
+		<body
+			class="bg-emerald-950 text-emerald-50 min-h-screen"
+			hx-boost="true"
+			hx-target="#app"
+			hx-select="#app"
+			hx-swap="outerHTML"
+			hx-push-url="false"
+		>
+			<header class="border-b border-emerald-800 px-4 py-2">
+				<h1 class="font-bold text-lg">
+					<span class="text-emerald-50">♠</span>
+					<span class="text-rose-400">♥</span>
+					ハート
+				</h1>
+			</header>
+			<main id="app" class="max-w-4xl mx-auto p-4 space-y-4">
+				{ children... }
+			</main>
+		</body>
+	</html>
+}
