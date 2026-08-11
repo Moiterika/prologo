@@ -127,4 +127,13 @@ make test
 | --- | --- |
 | `rules_test.go` | Prolog 側ルールの検証 (マストフォロー、第1トリック制約、ハートブレイク、勝者判定、`validate_deal/1`、スラム、パス方向、AI が常に合法手を返すこと) |
 | `game_test.go` | 状態機械。自動操作で 1 ゲーム通し、局面遷移と失点の合計を確認 |
+| `viewmodel_test.go` | 円卓の席の割り当てと、出したカードがどの席に付くか |
 | `server_test.go` | HTTP 層。実際にサーバーを立ててフォーム送信でトリックを進め、セッションが独立していることを確認 |
+| `example_test.go` | 使い方の実例 (Go の Example 関数)。マストフォローの判定とトリックの勝敗判定 |
+
+`example_test.go` の Example 関数は `go test` で実行され、標準出力が末尾の
+`// Output:` コメントと一致するかまで検証される。使い方の説明と回帰テストを兼ねる。
+
+```
+go test -run Example -v .
+```
