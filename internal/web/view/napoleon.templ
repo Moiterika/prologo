@@ -1,0 +1,453 @@
+package view
+
+// =============================================
+// ルール選択
+// =============================================
+
+templ NapoleonSetupPage(vm NapoleonSetupVM) {
+	@Layout("ナポレオン — ルール設定", "napoleon") {
+		<section class="bg-emerald-900/40 border border-emerald-800 rounded-lg p-6 space-y-6">
+			<div>
+				<h2 class="text-xl font-bold">ローカルルールを選んでください</h2>
+				<p class="text-sm text-emerald-400 mt-1">
+					セイムツーやよろめきは有名なローカルルールですが、流儀が分かれます。
+					始める前に決めておく類のものをここで選びます。
+				</p>
+			</div>
+			<form method="post" action="/napoleon/start" class="space-y-6">
+				for _, g := range vm.Groups {
+					@choiceGroup(g)
+				}
+				<button
+					type="submit"
+					class="bg-amber-500 hover:bg-amber-400 text-emerald-950 font-bold rounded px-8 py-2"
+				>
+					このルールで始める
+				</button>
+				@toggleGroupScript()
+			</form>
+			<div class="text-xs text-emerald-500 border-t border-emerald-800 pt-4 space-y-1">
+				<p>これ以外の規則は共通です。</p>
+				<ul class="list-disc list-inside space-y-0.5">
+					<li>A・K・Q・J・10 の 20 枚が得点カード (絵札)</li>
+					<li>強い順に ♠A (オールマイティ) &gt; 正J &gt; 裏J &gt; 切り札 &gt; 台札 &gt; それ以外</li>
+					<li>正Jは切り札と同じマークの J、裏Jは同じ色のもう一方のマークの J</li>
+					<li>台札と同じマークを持っていたら必ず出す (マストフォロー)</li>
+					<li>ナポレオンは副官のカードを 1 枚指名します。そのカードが場に出るまで副官は分かりません</li>
+					<li>ナポレオンは埋め札を手札に加え、同じ枚数を伏せ直します</li>
+					<li>全 { itoa(vm.TotalGames) } ゲームの合計得点で競います</li>
+				</ul>
+			</div>
+		</section>
+	}
+}
+
+// =============================================
+// 盤面
+// =============================================
+
+templ NapoleonTablePage(vm NapoleonTableVM) {
+	@Layout("ナポレオン", "napoleon") {
+		@napoleonStatus(vm)
+		@messages(vm.Error, vm.Notice)
+		switch vm.Phase {
+			case "bidding":
+				@napoleonScoreStrip(vm)
+				@napoleonBidding(vm)
+				@napoleonHandView(vm)
+			case "naming":
+				@napoleonNaming(vm)
+				@napoleonHandView(vm)
+			case "discarding":
+				@napoleonDiscard(vm)
+			case "round_done":
+				@napoleonRoundResult(vm)
+			case "game_over":
+				@napoleonGameOver(vm)
+			default:
+				@napoleonCircle(vm)
+				if vm.Phase == "trick_done" {
+					@napoleonNextBar(vm)
+				}
+				@napoleonHand(vm)
+		}
+	}
+}
+
+templ napoleonStatus(vm NapoleonTableVM) {
+	<section class="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-emerald-300">
+		<span>第 { itoa(vm.GameNo) } / { itoa(vm.TotalGames) } ゲーム</span>
+		if vm.TrumpSymbol != "" {
+			<span>切り札 <span class="font-bold text-base">{ vm.TrumpSymbol }</span></span>
+			<span>宣言 { itoa(vm.BidCount) } 枚</span>
+			if vm.AideCardLabel != "" {
+				<span>
+					副官指名
+					<span
+						class={ "font-bold rounded bg-white px-1",
+							templ.KV("text-rose-600", vm.AideCardRed),
+							templ.KV("text-slate-900", !vm.AideCardRed) }
+					>
+						{ vm.AideCardLabel }
+					</span>
+				</span>
+			}
+			<span>ナポレオン軍 <span class="font-bold text-amber-300">{ itoa(vm.GotPoints) }</span> / { itoa(vm.MaxPoints) } 枚</span>
+		} else if vm.CurrentBid != "" {
+			<span>今の宣言 { vm.CurrentBid }</span>
+		}
+		if vm.TrickTotal > 0 && vm.Phase != "bidding" && vm.Phase != "naming" && vm.Phase != "discarding" {
+			<span>第 { itoa(vm.TrickNo) } / { itoa(vm.TrickTotal) } トリック</span>
+		}
+		if vm.LeadSuit != "" {
+			<span>台札 <span class="font-bold">{ vm.LeadSuit }</span></span>
+		}
+	</section>
+	@ruleChips(vm.RuleLabels)
+}
+
+templ napoleonScoreStrip(vm NapoleonTableVM) {
+	<section class="flex flex-wrap gap-2">
+		for _, s := range vm.Seats {
+			<div class="flex items-baseline gap-2 rounded-lg border border-emerald-800 bg-emerald-900/40 px-3 py-1.5">
+				<span class={ "text-sm font-semibold", templ.KV("text-amber-300", s.IsYou) }>{ s.Name }</span>
+				<span class="text-xs text-emerald-400">累計 { itoa(s.Score) }</span>
+			</div>
+		}
+	</section>
+}
+
+// =============================================
+// 競り
+// =============================================
+
+templ napoleonBidding(vm NapoleonTableVM) {
+	<section class="bg-emerald-900/40 border border-emerald-800 rounded-lg p-4 space-y-4">
+		<div>
+			<h2 class="font-semibold">ナポレオン宣言</h2>
+			<p class="text-sm text-emerald-400 mt-1">
+				切り札のマークと、取ると約束する絵札の枚数を宣言します。
+				枚数が多いほど強く、同じ枚数なら ♠ &gt; ♥ &gt; ♦ &gt; ♣ の順に強い宣言です。
+				最低 { itoa(vm.MinBid) } 枚から。
+			</p>
+		</div>
+		if len(vm.BidHistory) > 0 {
+			<ul class="text-sm text-emerald-300 space-y-0.5">
+				for _, line := range vm.BidHistory {
+					<li>{ line }</li>
+				}
+			</ul>
+		}
+		if vm.YourBidTurn {
+			<div class="space-y-3">
+				<p class="text-sm text-amber-300 font-semibold">あなたの番です</p>
+				<form method="post" action="/napoleon/bid" class="flex flex-wrap gap-2">
+					for _, b := range vm.AvailableBids {
+						<button
+							type="submit"
+							name="bid"
+							value={ b.Suit + ":" + itoa(b.Count) }
+							class="rounded border border-emerald-700 hover:border-amber-400 bg-emerald-950/40 px-3 py-1.5 text-sm"
+						>
+							<span class={ templ.KV("text-rose-400", b.Red), templ.KV("text-emerald-50", !b.Red) }>
+								{ b.Label }
+							</span>
+						</button>
+					}
+				</form>
+				<form method="post" action="/napoleon/bid">
+					<input type="hidden" name="bid" value="pass"/>
+					<button type="submit" class="border border-emerald-600 hover:bg-emerald-800 rounded px-10 py-2 font-semibold">
+						パス
+					</button>
+				</form>
+			</div>
+		} else {
+			<p class="text-sm text-emerald-500">CPU が宣言しています…</p>
+		}
+	</section>
+}
+
+// =============================================
+// 副官の指名
+// =============================================
+
+templ napoleonNaming(vm NapoleonTableVM) {
+	<section class="bg-emerald-900/40 border border-emerald-800 rounded-lg p-4 space-y-4">
+		<div>
+			<h2 class="font-semibold">副官のカードを指名してください</h2>
+			<p class="text-sm text-emerald-400 mt-1">
+				指名したカードを持っている人があなたの副官になります。
+				ただし、そのカードが場に出るまで誰が副官かは誰にも分かりません。
+				埋め札に伏せられていた場合は副官なしのゲームになります。
+			</p>
+		</div>
+		<form method="post" action="/napoleon/aide" class="flex flex-wrap gap-2">
+			for _, c := range vm.AideChoices {
+				<button
+					type="submit"
+					name="card"
+					value={ c.Suit + ":" + c.Rank }
+					class="rounded border border-emerald-700 hover:border-amber-400 bg-white px-2 py-1 text-sm font-bold"
+				>
+					<span class={ templ.KV("text-rose-600", c.Red), templ.KV("text-slate-900", !c.Red) }>
+						{ c.Label }
+					</span>
+				</button>
+			}
+		</form>
+	</section>
+}
+
+// =============================================
+// 埋め札の入れ替え
+// =============================================
+
+templ napoleonDiscard(vm NapoleonTableVM) {
+	<section class="bg-emerald-900/40 border border-emerald-800 rounded-lg p-4">
+		<div class="flex flex-wrap items-baseline gap-x-3 gap-y-1 mb-3">
+			<h2 class="font-semibold">伏せ直すカードを { itoa(vm.WidowSize) } 枚選んでください</h2>
+			<p id="select-status" class="text-sm text-amber-300">あと { itoa(vm.WidowSize) } 枚</p>
+		</div>
+		<p class="text-sm text-emerald-400 mb-3">
+			埋め札を手札に加えました。いらないカードを同じ枚数だけ伏せ直します。
+			伏せたカードは誰も取れないので、絵札を伏せるとその分だけ得点が減ります。
+		</p>
+		<form method="post" action="/napoleon/discard" id="play-form" data-need={ itoa(vm.WidowSize) }>
+			<div class="flex flex-wrap gap-2">
+				for _, c := range vm.Hand {
+					<label class="cursor-pointer">
+						<input type="checkbox" name="card" value={ itoa(c.Number) } class="peer sr-only"/>
+						<span class="block rounded-md peer-checked:-translate-y-2 peer-checked:ring-4 peer-checked:ring-amber-400 transition">
+							@cardFace(c, false)
+						</span>
+					</label>
+				}
+			</div>
+			<div class="mt-5 flex justify-center">
+				<button
+					type="submit"
+					class="bg-amber-500 hover:bg-amber-400 disabled:bg-emerald-800 disabled:text-emerald-600 disabled:cursor-not-allowed text-emerald-950 font-bold rounded px-10 py-2"
+				>
+					伏せる
+				</button>
+			</div>
+		</form>
+		@selectScript()
+	</section>
+}
+
+// =============================================
+// 円卓
+// =============================================
+
+templ napoleonCircle(vm NapoleonTableVM) {
+	<section class="bg-emerald-900/30 border border-emerald-800 rounded-xl p-3 sm:p-5">
+		<div class="grid grid-cols-3 grid-rows-3 gap-2 place-items-center">
+			for _, s := range vm.Seats {
+				<div class={ "flex items-center justify-center gap-2", seatArea(s.Area), seatFlow(s.Area) }>
+					@napoleonPlate(s)
+					@napoleonCard(s)
+				</div>
+			}
+			<div class="col-start-2 row-start-2 text-center px-2 space-y-1">
+				<p class="text-sm text-emerald-300">{ vm.CenterText }</p>
+				if vm.TrickReason != "" {
+					<p class="text-xs text-amber-300 font-bold">{ vm.TrickReason }</p>
+				}
+			</div>
+		</div>
+	</section>
+}
+
+templ napoleonPlate(s NapoleonSeatVM) {
+	<div
+		class={ "rounded-lg border px-3 py-2 text-center min-w-24",
+			templ.KV("border-amber-400 bg-emerald-900", s.Turn),
+			templ.KV("border-emerald-800 bg-emerald-900/40", !s.Turn) }
+	>
+		<div class={ "font-semibold text-sm", templ.KV("text-amber-300", s.IsYou) }>{ s.Name }</div>
+		if s.Role != "" {
+			<div class="text-[10px] text-emerald-300 mt-0.5">{ s.Role }</div>
+		}
+		<div class="text-xs">
+			<span class="text-amber-300">絵札 { itoa(s.TakenPoints) }</span>
+			<span class="text-emerald-500">/ 累計 { itoa(s.Score) }</span>
+		</div>
+	</div>
+}
+
+templ napoleonCard(s NapoleonSeatVM) {
+	if s.Played != nil {
+		<div class="relative">
+			@cardFace(*s.Played, s.Winner)
+			<span class="absolute -top-1.5 -left-1.5 w-5 h-5 rounded-full bg-emerald-700 text-emerald-50 text-[10px] flex items-center justify-center">
+				{ itoa(s.PlayOrder) }
+			</span>
+			if s.Winner {
+				<span class="absolute -bottom-2 left-1/2 -translate-x-1/2 bg-amber-400 text-emerald-950 text-[10px] font-bold rounded px-1.5">
+					取り
+				</span>
+			}
+		</div>
+	} else {
+		<span class="inline-block w-14 h-20 rounded-md border-2 border-dashed border-emerald-800"></span>
+	}
+}
+
+templ napoleonNextBar(vm NapoleonTableVM) {
+	<section class="flex justify-center">
+		<form method="post" action="/napoleon/next">
+			<button type="submit" class="bg-emerald-600 hover:bg-emerald-500 rounded px-8 py-2 font-semibold">
+				if vm.TrickNo < vm.TrickTotal {
+					次のトリックへ
+				} else {
+					ゲームを精算する
+				}
+			</button>
+		</form>
+	</section>
+}
+
+// =============================================
+// 手札
+// =============================================
+
+templ napoleonHand(vm NapoleonTableVM) {
+	<section class="bg-emerald-900/40 border border-emerald-800 rounded-lg p-4">
+		<div class="flex items-center justify-between mb-3">
+			<h2 class="text-sm text-emerald-400">あなたの手札</h2>
+			if vm.Phase == "playing" && len(vm.AideChoices) == 0 {
+				<span class="text-sm text-amber-300 font-semibold">出すカードを選んでください</span>
+			}
+		</div>
+		<form method="post" action="/napoleon/play" class="flex flex-wrap gap-2">
+			for _, c := range vm.Hand {
+				if c.Number > 0 && vm.Phase == "playing" {
+					<button
+						type="submit"
+						name="card"
+						value={ itoa(c.Number) }
+						disabled?={ !c.Legal }
+						class={ "transition",
+							templ.KV("hover:-translate-y-2 cursor-pointer", c.Legal),
+							templ.KV("opacity-30 cursor-not-allowed", !c.Legal) }
+					>
+						@cardFace(c, false)
+					</button>
+				} else {
+					<span class="opacity-60">
+						@cardFace(c, false)
+					</span>
+				}
+			}
+		</form>
+		<p class="text-xs text-emerald-500 mt-3">薄いカードは今のルールでは出せません。</p>
+	</section>
+}
+
+// 競り・指名のときは押せない手札をただ並べる。
+templ napoleonHandView(vm NapoleonTableVM) {
+	<section class="bg-emerald-900/40 border border-emerald-800 rounded-lg p-4">
+		<h2 class="text-sm text-emerald-400 mb-3">あなたの手札</h2>
+		<div class="flex flex-wrap gap-2">
+			for _, c := range vm.Hand {
+				@cardFace(c, false)
+			}
+		</div>
+	</section>
+}
+
+// =============================================
+// 精算
+// =============================================
+
+templ napoleonRoundResult(vm NapoleonTableVM) {
+	<section class="bg-emerald-900/40 border border-emerald-800 rounded-lg p-4 space-y-3">
+		<h2 class="font-semibold">第 { itoa(vm.GameNo) } ゲームの結果</h2>
+		<p
+			class={ "rounded p-3 font-bold",
+				templ.KV("bg-amber-500 text-emerald-950", vm.NapoleonWin),
+				templ.KV("bg-emerald-700", !vm.NapoleonWin) }
+		>
+			{ vm.OutcomeLabel }
+		</p>
+		<p class="text-sm text-emerald-300">
+			ナポレオンは { vm.NapoleonName }
+			if vm.Solo {
+				(副官なし)
+			} else if vm.AideName != "" {
+				、副官は { vm.AideName }
+			}
+			。切り札は { vm.TrumpSymbol }、宣言は { itoa(vm.BidCount) } 枚。
+			if vm.AideCardLabel != "" {
+				(指名は { vm.AideCardLabel })
+			}
+		</p>
+		<table class="w-full text-sm">
+			<thead class="text-emerald-400 border-b border-emerald-800">
+				<tr>
+					<th class="text-left py-1">プレイヤー</th>
+					<th class="text-left py-1">立場</th>
+					<th class="text-right py-1">取った絵札</th>
+					<th class="text-right py-1">このゲーム</th>
+					<th class="text-right py-1">累計</th>
+				</tr>
+			</thead>
+			<tbody>
+				for _, s := range vm.Seats {
+					<tr class="border-b border-emerald-900">
+						<td class={ "py-1", templ.KV("text-amber-300 font-semibold", s.IsYou) }>{ s.Name }</td>
+						<td class="py-1">{ s.Role }</td>
+						<td class="text-right">{ itoa(s.TakenPoints) }</td>
+						<td class="text-right font-semibold">{ signed(s.Delta) }</td>
+						<td class="text-right">{ itoa(s.Score) }</td>
+					</tr>
+				}
+			</tbody>
+		</table>
+		<form method="post" action="/napoleon/next" class="mt-4 flex justify-center">
+			<button type="submit" class="bg-emerald-600 hover:bg-emerald-500 rounded px-8 py-2 font-semibold">
+				if vm.LastGame {
+					最終結果へ
+				} else {
+					次のゲームへ
+				}
+			</button>
+		</form>
+	</section>
+}
+
+templ napoleonGameOver(vm NapoleonTableVM) {
+	<section class="bg-emerald-900/40 border border-emerald-800 rounded-lg p-6 text-center space-y-4">
+		<h2 class="text-2xl font-bold">
+			if vm.YouWin {
+				<span class="text-amber-300">あなたの勝ちです！</span>
+			} else {
+				<span>{ vm.WinnerName } の勝ちです</span>
+			}
+		</h2>
+		<table class="w-full max-w-sm mx-auto text-sm">
+			<tbody>
+				for _, s := range vm.Seats {
+					<tr class="border-b border-emerald-900">
+						<td class={ "py-1 text-left", templ.KV("text-amber-300 font-semibold", s.IsYou) }>{ s.Name }</td>
+						<td class="py-1 text-right">{ signed(s.Score) } 点</td>
+					</tr>
+				}
+			</tbody>
+		</table>
+		<div class="flex flex-wrap gap-3 justify-center">
+			<form method="post" action="/napoleon/new">
+				<button type="submit" class="bg-amber-500 hover:bg-amber-400 text-emerald-950 font-bold rounded px-8 py-2">
+					同じルールでもう一度
+				</button>
+			</form>
+			<form method="post" action="/napoleon/setup">
+				<button type="submit" class="border border-emerald-600 hover:bg-emerald-800 rounded px-8 py-2 font-semibold">
+					ルールを選び直す
+				</button>
+			</form>
+		</div>
+	</section>
+}

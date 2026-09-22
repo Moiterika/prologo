@@ -241,15 +241,7 @@ apply_slam_rule(Raw, Final, Slammer) :-
         Final = Raw
     ).
 
-index_of(X, List, Index) :-
-    index_of_(List, X, 0, Index).
-
-index_of_([X|_], Y, I, I) :-
-    X == Y,
-    !.
-index_of_([_|T], Y, I0, I) :-
-    I1 is I0 + 1,
-    index_of_(T, Y, I1, I).
+% index_of/3 (0始まりの位置) は compat.pl にある。
 
 slam_final([], _, _, _, []).
 slam_final([_|T], I, Idx, Total, [S|Rest]) :-

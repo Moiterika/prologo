@@ -96,12 +96,15 @@ func buildSetupVM(engine *rules.Engine, current rules.Options, limit int) (view.
 
 // seatAreas は円卓のどこに誰を置くかを決める。
 // 「あなた」(0 番) を必ず手前 (bottom) にして、そこから席順に左回りで並べる。
+// ナポレオンは 6 人まであるので、3x3 の外周をぐるりと使う。
 func seatAreas(players int) []string {
 	switch players {
 	case 3:
 		return []string{"bottom", "left", "right"}
 	case 5:
 		return []string{"bottom", "left", "topleft", "topright", "right"}
+	case 6:
+		return []string{"bottom", "left", "topleft", "top", "topright", "right"}
 	default:
 		return []string{"bottom", "left", "top", "right"}
 	}

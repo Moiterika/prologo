@@ -5,6 +5,10 @@ package web
 // WebSocket もデータベースも使わない。ブラウザからの POST でゲームを 1 手
 // 進め、その場で画面を描き直して返すだけ。htmx が #app だけを差し替える。
 // 状態はプロセス内のメモリに、Cookie のセッション ID で紐付けて持つ。
+//
+// 3 つのゲーム (ハート / 大富豪 / ナポレオン) を 1 つのサーバーで出す。
+// ハートは "/"、他は "/daifugo" と "/napoleon" の下。
+// それぞれのハンドラは server_daifugo.go / server_napoleon.go にある。
 
 import (
 	crand "crypto/rand"
@@ -16,23 +20,55 @@ import (
 	"strconv"
 	"sync"
 
+	dgame "hearts/internal/game/daifugo"
+	ngame "hearts/internal/game/napoleon"
+
 	"hearts/internal/game"
 	"hearts/internal/rules"
+	drules "hearts/internal/rules/daifugo"
+	nrules "hearts/internal/rules/napoleon"
 	"hearts/internal/web/view"
 )
 
 const sessionCookie = "hearts_session"
 
-// session は 1 ブラウザ分のゲーム。
+// session は 1 ブラウザ分の対局。
 //
-// Prolog インタプリタはセッションごとに 1 つ持つ。共有すると同時アクセスで
-// 状態が混ざるおそれがあるうえ、人数設定 (hearts.pl の set_players/1) や
-// 第1トリックの流儀もセッション単位で変えられなくなる。
+// Prolog インタプリタはゲームごと・セッションごとに 1 つ持つ。共有すると
+// 同時アクセスで状態が混ざるおそれがあるうえ、人数やローカルルールの設定も
+// セッション単位で変えられなくなる。
+//
+// インタプリタはそのゲームを最初に開いたときに作る。ハートしか遊ばない人に
+// 大富豪とナポレオンの .pl を読ませても仕方がない。
 type session struct {
-	mu     sync.Mutex
+	mu sync.Mutex
+
+	// shortID はログに出すための短い目印。どのブラウザの対局かを見分ける。
+	shortID string
+
+	// ハート
 	engine *rules.Engine
 	opts   rules.Options
 	game   *game.Game // nil ならまだルール選択の画面
+
+	// 大富豪
+	dEngine *drules.Engine
+	dOpts   drules.Options
+	dGame   *dgame.Game
+
+	// ナポレオン
+	nEngine *nrules.Engine
+	nOpts   nrules.Options
+	nGame   *ngame.Game
+}
+
+// Config はサーバーの設定。
+type Config struct {
+	PLDir   string // 空でなければこのディレクトリの .pl を読む
+	Players int    // ハートの人数 (0 なら hearts.pl の既定)
+	Limit   int    // ハートの終了点
+	Games   int    // 大富豪・ナポレオンで通して遊ぶゲーム数
+	Seed    int64  // 0 なら毎回変わる
 }
 
 // Server はセッションを束ねる。
@@ -43,16 +79,23 @@ type Server struct {
 	plDir   string
 	players int
 	limit   int
+	games   int
 	seed    int64
 }
 
-func NewServer(plDir string, players, limit int, seed int64) *Server {
+// NewServer は設定を受け取ってサーバーを作る。
+func NewServer(cfg Config) *Server {
+	games := cfg.Games
+	if games <= 0 {
+		games = 5
+	}
 	return &Server{
 		sessions: map[string]*session{},
-		plDir:    plDir,
-		players:  players,
-		limit:    limit,
-		seed:     seed,
+		plDir:    cfg.PLDir,
+		players:  cfg.Players,
+		limit:    cfg.Limit,
+		games:    games,
+		seed:     cfg.Seed,
 	}
 }
 
@@ -73,27 +116,35 @@ func (s *Server) Routes(mux *http.ServeMux) {
 			http.Redirect(w, r, "/", http.StatusSeeOther)
 		})
 	}
+
+	s.routesDaifugo(mux)
+	s.routesNapoleon(mux)
 }
 
 // =============================================
 // セッション
 // =============================================
 
-// newEngine は Prolog を読み込み、人数設定まで済ませる。
-func (s *Server) newEngine() (*rules.Engine, error) {
+// heartsSession はセッションのハートぶんを用意する。
+func (s *Server) heartsSession(sess *session) error {
+	if sess.engine != nil {
+		return nil
+	}
 	engine, err := rules.New(s.plDir)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if s.players != 0 {
 		if err := engine.SetPlayers(s.players); err != nil {
-			return nil, err
+			return err
 		}
 	}
-	return engine, nil
+	sess.engine = engine
+	sess.opts = rules.DefaultOptions()
+	return nil
 }
 
-// StartGame は選んだ流儀でゲームを 1 つ作る。
+// StartGame は選んだ流儀でハートを 1 局作る。
 // 起動時にルールファイルの誤りを弾くためにも使う。
 func (s *Server) StartGame(engine *rules.Engine, opts rules.Options) (*game.Game, error) {
 	seed := s.seed
@@ -104,24 +155,18 @@ func (s *Server) StartGame(engine *rules.Engine, opts rules.Options) (*game.Game
 }
 
 // session は Cookie からセッションを引く。無ければ作る。
-// 新しいセッションはまだゲームを持たず、ルール選択の画面から始まる。
-func (s *Server) session(w http.ResponseWriter, r *http.Request) (*session, error) {
+func (s *Server) session(w http.ResponseWriter, r *http.Request) *session {
 	if c, err := r.Cookie(sessionCookie); err == nil {
 		s.mu.Lock()
 		sess, ok := s.sessions[c.Value]
 		s.mu.Unlock()
 		if ok {
-			return sess, nil
+			return sess
 		}
 	}
 
-	engine, err := s.newEngine()
-	if err != nil {
-		return nil, err
-	}
-	sess := &session{engine: engine, opts: rules.DefaultOptions()}
-
 	id := newSessionID()
+	sess := &session{shortID: id[:6]}
 	s.mu.Lock()
 	s.sessions[id] = sess
 	s.mu.Unlock()
@@ -133,7 +178,21 @@ func (s *Server) session(w http.ResponseWriter, r *http.Request) (*session, erro
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
 	})
-	return sess, nil
+	return sess
+}
+
+// lockedSession はセッションを引いてロックし、prepare でそのゲームの
+// Prolog を (まだなら) 読み込む。false が返ったときは応答済みなので
+// 呼び出し側は何もしなくてよい。ロックの解除は呼び出し側の責任。
+func (s *Server) lockedSession(w http.ResponseWriter, r *http.Request, prepare func(*session) error) (*session, bool) {
+	sess := s.session(w, r)
+	sess.mu.Lock()
+	if err := prepare(sess); err != nil {
+		sess.mu.Unlock()
+		s.fail(w, err)
+		return nil, false
+	}
+	return sess, true
 }
 
 func newSessionID() string {
@@ -159,7 +218,7 @@ func newRandomID64() uint64 {
 }
 
 // =============================================
-// ハンドラ
+// ハンドラ (ハート)
 // =============================================
 
 // showCurrent はゲーム中なら盤面を、開始前ならルール選択の画面を出す。
@@ -169,13 +228,10 @@ func (s *Server) showCurrent(w http.ResponseWriter, r *http.Request) {
 
 // postStart は選んだルールでゲームを始める。
 func (s *Server) postStart(w http.ResponseWriter, r *http.Request) {
-	sess, err := s.session(w, r)
-	if err != nil {
-		s.fail(w, err)
+	sess, ok := s.lockedSession(w, r, s.heartsSession)
+	if !ok {
 		return
 	}
-
-	sess.mu.Lock()
 	defer sess.mu.Unlock()
 
 	sess.opts = rules.ParseOptions(
@@ -194,13 +250,10 @@ func (s *Server) postStart(w http.ResponseWriter, r *http.Request) {
 
 // postSetup はルール選択の画面に戻る。
 func (s *Server) postSetup(w http.ResponseWriter, r *http.Request) {
-	sess, err := s.session(w, r)
-	if err != nil {
-		s.fail(w, err)
+	sess, ok := s.lockedSession(w, r, s.heartsSession)
+	if !ok {
 		return
 	}
-
-	sess.mu.Lock()
 	defer sess.mu.Unlock()
 
 	sess.game = nil
@@ -233,13 +286,10 @@ func (s *Server) postNext(w http.ResponseWriter, r *http.Request) {
 
 // postNew は同じルールでゲームを最初からやり直す。
 func (s *Server) postNew(w http.ResponseWriter, r *http.Request) {
-	sess, err := s.session(w, r)
-	if err != nil {
-		s.fail(w, err)
+	sess, ok := s.lockedSession(w, r, s.heartsSession)
+	if !ok {
 		return
 	}
-
-	sess.mu.Lock()
 	defer sess.mu.Unlock()
 
 	g, err := s.StartGame(sess.engine, sess.opts)
@@ -255,13 +305,10 @@ func (s *Server) postNew(w http.ResponseWriter, r *http.Request) {
 // action が入力ミスを返した場合はメッセージとして画面に出す。
 // まだゲームが始まっていなければ action は呼ばず、ルール選択の画面を出す。
 func (s *Server) handle(w http.ResponseWriter, r *http.Request, action func(*game.Game) error) {
-	sess, err := s.session(w, r)
-	if err != nil {
-		s.fail(w, err)
+	sess, ok := s.lockedSession(w, r, s.heartsSession)
+	if !ok {
 		return
 	}
-
-	sess.mu.Lock()
 	defer sess.mu.Unlock()
 
 	var msg string

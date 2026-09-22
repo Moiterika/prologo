@@ -1,6 +1,30 @@
 package view
 
-templ Layout(title string) {
+// NavItem はヘッダーに並べるゲームの見出し。
+type NavItem struct {
+	Href   string
+	Label  string
+	Mark   string // ♠ ♥ ♦
+	Red    bool
+	Active bool
+}
+
+// navItems は遊べるゲームの一覧。active には "hearts" / "daifugo" /
+// "napoleon" のいずれかを渡す。
+func navItems(active string) []NavItem {
+	items := []NavItem{
+		{Href: "/", Label: "ハート", Mark: "♥", Red: true},
+		{Href: "/daifugo", Label: "大富豪", Mark: "♠"},
+		{Href: "/napoleon", Label: "ナポレオン", Mark: "♦", Red: true},
+	}
+	keys := []string{"hearts", "daifugo", "napoleon"}
+	for i := range items {
+		items[i].Active = keys[i] == active
+	}
+	return items
+}
+
+templ Layout(title string, active string) {
 	<!DOCTYPE html>
 	<html lang="ja">
 		<head>
@@ -17,7 +41,7 @@ templ Layout(title string) {
 		// hx-push-url="false" が要る。既定では POST 先の URL (/play など) が
 		// アドレス欄に載ってしまい、そこでリロードすると GET /play になる。
 		// ゲームの状態はすべてサーバー側にあり履歴に意味が無いので、
-		// URL は "/" のまま動かさない。
+		// URL は動かさない。
 		<body
 			class="bg-emerald-950 text-emerald-50 min-h-screen"
 			hx-boost="true"
@@ -26,16 +50,117 @@ templ Layout(title string) {
 			hx-swap="outerHTML"
 			hx-push-url="false"
 		>
-			<header class="border-b border-emerald-800 px-4 py-2">
-				<h1 class="font-bold text-lg">
-					<span class="text-emerald-50">♠</span>
-					<span class="text-rose-400">♥</span>
-					ハート
-				</h1>
+			<header class="border-b border-emerald-800 px-4 py-2 flex flex-wrap items-center gap-x-4 gap-y-1">
+				<h1 class="font-bold text-lg">トランプ</h1>
+				// ゲームの切り替えはページ遷移なので、htmx の差し替え対象から外す。
+				<nav class="flex flex-wrap gap-2 text-sm" hx-boost="false">
+					for _, item := range navItems(active) {
+						<a
+							href={ templ.SafeURL(item.Href) }
+							class={ "rounded px-3 py-1 border",
+								templ.KV("border-amber-400 bg-emerald-900 font-semibold", item.Active),
+								templ.KV("border-emerald-800 hover:border-emerald-600", !item.Active) }
+						>
+							<span class={ templ.KV("text-rose-400", item.Red), templ.KV("text-emerald-50", !item.Red) }>
+								{ item.Mark }
+							</span>
+							{ item.Label }
+						</a>
+					}
+				</nav>
 			</header>
 			<main id="app" class="max-w-4xl mx-auto p-4 space-y-4">
 				{ children... }
 			</main>
 		</body>
 	</html>
+}
+
+// ruleChips は選んだ流儀を盤面の上に小さく並べる。
+templ ruleChips(labels []string) {
+	<section class="flex flex-wrap gap-2 text-xs text-emerald-500">
+		for _, label := range labels {
+			<span class="border border-emerald-800 rounded px-2 py-0.5">{ label }</span>
+		}
+	</section>
+}
+
+// messages は入力ミスの指摘と案内。
+templ messages(errMsg string, notice string) {
+	if errMsg != "" {
+		<div class="bg-rose-900/70 border border-rose-500 rounded p-3 text-sm">{ errMsg }</div>
+	}
+	if notice != "" {
+		<div class="bg-amber-900/60 border border-amber-500 rounded p-3 text-sm">{ notice }</div>
+	}
+}
+
+// choiceGroup はルール選択画面の 1 つの問い。
+// Toggles があれば、ラジオボタンの下に「その流儀の枝分かれ」として
+// チェックボックスを添える。親の流儀を使わない選択肢 (TogglesHideOn) を
+// 選んでいるあいだは、枝分かれごと隠す。
+templ choiceGroup(g GroupVM) {
+	<fieldset class="space-y-2" data-toggle-group={ g.Name } data-hide-on={ g.TogglesHideOn }>
+		<legend class="font-semibold mb-2">{ g.Legend }</legend>
+		for _, c := range g.Choices {
+			@radio(g.Name, OptionVM{Value: c.Value, Label: c.Label, Description: c.Description, Checked: c.Checked})
+		}
+		if len(g.Toggles) > 0 {
+			<div
+				data-toggle-block
+				hidden?={ g.TogglesHidden }
+				class="ml-6 pl-3 border-l-2 border-emerald-800 space-y-2"
+			>
+				if g.TogglesNote != "" {
+					<p class="text-xs text-emerald-500">{ g.TogglesNote }</p>
+				}
+				for _, tg := range g.Toggles {
+					@checkbox(tg)
+				}
+			</div>
+		}
+	</fieldset>
+}
+
+// toggleGroupScript は「親の流儀を使わない」を選んだときに枝分かれを隠す。
+//
+// 初期状態はサーバー側で決めてあるので、JavaScript を切っていても
+// 既定の見え方は正しい。切っている場合は選び直しても隠れたままになるが、
+// 隠れた枝分かれは Prolog 側が無視するので、遊ぶぶんには困らない。
+templ toggleGroupScript() {
+	<script type="text/javascript">
+		(function () {
+			document.querySelectorAll("fieldset[data-toggle-group]").forEach(function (fs) {
+				var hideOn = fs.dataset.hideOn;
+				var block = fs.querySelector("[data-toggle-block]");
+				if (!block || !hideOn) return;
+				var radios = fs.querySelectorAll('input[name="' + fs.dataset.toggleGroup + '"]');
+				function sync() {
+					var hide = false;
+					radios.forEach(function (r) {
+						if (r.checked && r.value === hideOn) hide = true;
+					});
+					block.hidden = hide;
+				}
+				radios.forEach(function (r) { r.addEventListener("change", sync); });
+				sync();
+			});
+		})();
+	</script>
+}
+
+templ checkbox(t ToggleVM) {
+	<label class="flex items-start gap-3 rounded-lg border border-emerald-800 bg-emerald-950/40 p-3 cursor-pointer hover:border-emerald-600 has-[:checked]:border-amber-400 has-[:checked]:bg-emerald-900">
+		<input
+			type="checkbox"
+			name={ t.Name }
+			value="on"
+			checked?={ t.Checked }
+			class="mt-1 accent-amber-400"
+		/>
+		<span>
+			<span class="font-semibold block">{ t.Label }</span>
+			<span class="text-sm text-emerald-400">{ t.Description }</span>
+		</span>
+	</label>
 }

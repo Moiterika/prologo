@@ -1,0 +1,542 @@
+package view
+
+// =============================================
+// ルール選択
+// =============================================
+
+templ DaifugoSetupPage(vm DaifugoSetupVM) {
+	@Layout("大富豪 — ルール設定", "daifugo") {
+		<section class="bg-emerald-900/40 border border-emerald-800 rounded-lg p-6 space-y-6">
+			<div>
+				<h2 class="text-xl font-bold">ローカルルールを選んでください</h2>
+				<p class="text-sm text-emerald-400 mt-1">
+					大富豪はローカルルールの多いゲームです。盛るほど賑やかになりますが、
+					その分「今のは出せない」が増えます。
+				</p>
+			</div>
+			<form method="post" action="/daifugo/start" class="space-y-6">
+				for _, g := range vm.Groups {
+					@choiceGroup(g)
+				}
+				<button
+					type="submit"
+					class="bg-amber-500 hover:bg-amber-400 text-emerald-950 font-bold rounded px-8 py-2"
+				>
+					このルールで始める
+				</button>
+				@toggleGroupScript()
+			</form>
+			<div class="text-xs text-emerald-500 border-t border-emerald-800 pt-4 space-y-1">
+				<p>これ以外の規則は共通です。</p>
+				<ul class="list-disc list-inside space-y-0.5">
+					<li>強さは 3 &lt; 4 &lt; … &lt; K &lt; A &lt; 2 &lt; ジョーカー。マークによる強弱はありません</li>
+					<li>出し方は 単騎 / ペア / スリーカード / フォーカード / 階段 (同じマークで連続する 3 枚以上)</li>
+					<li>場と同じ種別・同じ枚数で、より強いものだけ出せます</li>
+					<li>フォーカードで革命。もう一度出ると革命返しで元に戻ります</li>
+					<li>全 { itoa(vm.TotalGames) } ゲーム。順位に応じた点 (1 位が最大、最下位が 0) を足していきます</li>
+					<li>2 ゲーム目からは称号に応じてカードを交換します</li>
+				</ul>
+			</div>
+		</section>
+	}
+}
+
+// =============================================
+// 盤面
+// =============================================
+
+templ DaifugoTablePage(vm DaifugoTableVM) {
+	@Layout("大富豪", "daifugo") {
+		@daifugoStatus(vm)
+		@messages(vm.Error, vm.Notice)
+		switch vm.Phase {
+			case "exchange":
+				@daifugoSeats(vm)
+				@daifugoExchange(vm)
+			case "round_end":
+				@daifugoRoundResult(vm)
+			case "game_over":
+				@daifugoGameOver(vm)
+			case "jack_back":
+				@daifugoSeats(vm)
+				@daifugoOrderBar(vm)
+				@daifugoField(vm)
+				@daifugoJackBack(vm)
+				@daifugoLog(vm)
+			case "ten_discard":
+				@daifugoSeats(vm)
+				@daifugoOrderBar(vm)
+				@daifugoField(vm)
+				@daifugoHandOver(vm, "/daifugo/ten-discard", "10捨て", "捨てる")
+				@daifugoLog(vm)
+			case "seven_give":
+				@daifugoSeats(vm)
+				@daifugoOrderBar(vm)
+				@daifugoField(vm)
+				@daifugoHandOver(vm, "/daifugo/seven-give", "7渡し", "渡す")
+				@daifugoLog(vm)
+			default:
+				@daifugoSeats(vm)
+				@daifugoOrderBar(vm)
+				@daifugoField(vm)
+				@daifugoHand(vm)
+				@daifugoLog(vm)
+		}
+	}
+}
+
+templ daifugoStatus(vm DaifugoTableVM) {
+	<section class="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-emerald-300">
+		<span>第 { itoa(vm.GameNo) } / { itoa(vm.TotalGames) } ゲーム</span>
+		if vm.Revolution {
+			<span class="text-rose-400 font-bold">革命中</span>
+		}
+		if vm.JackBack {
+			<span class="text-rose-400 font-bold">Jバック中</span>
+		}
+		if vm.Reversed {
+			<span class="text-amber-300">強弱が反転しています (3 が最強)</span>
+		}
+		if vm.BoundLabel != "" {
+			<span class="text-amber-300">縛り { vm.BoundLabel }</span>
+		}
+		if vm.Strict {
+			<span class="text-amber-300 font-bold">激縛り</span>
+		}
+	</section>
+	@ruleChips(vm.RuleLabels)
+}
+
+// 席は横並びの札束。誰が何枚残しているかが一目で分かればよい。
+templ daifugoSeats(vm DaifugoTableVM) {
+	<section class="flex flex-wrap gap-2">
+		for _, s := range vm.Seats {
+			<div
+				class={ "rounded-lg border px-3 py-2 min-w-32",
+					templ.KV("border-amber-400 bg-emerald-900", s.Turn),
+					templ.KV("border-emerald-800 bg-emerald-900/40", !s.Turn),
+					templ.KV("opacity-50", s.Out) }
+			>
+				<div class="flex items-baseline gap-2">
+					<span class={ "font-semibold text-sm", templ.KV("text-amber-300", s.IsYou) }>{ s.Name }</span>
+					if s.Title != "" {
+						<span class="text-[10px] border border-emerald-700 rounded px-1">{ s.Title }</span>
+					}
+				</div>
+				<div class="text-xs text-emerald-400 mt-0.5">
+					if s.Out {
+						<span class="text-emerald-300">上がり</span>
+					} else {
+						残り { itoa(s.HandCount) } 枚
+					}
+				</div>
+				<div class="text-xs text-emerald-500">累計 { itoa(s.Score) } 点</div>
+				if s.Note != "" {
+					<div class="text-xs text-rose-400">{ s.Note }</div>
+				}
+			</div>
+		}
+	</section>
+}
+
+// 場は「今どの手が場を取っているか」と「そこに至るまでに誰が何を出したか」の
+// 両方を出す。大富豪はトリックの区切りが無く、1 回の応答で CPU が何人も続けて
+// 手を出すので、直前の 1 手だけでは何が起きたのか分からない。
+templ daifugoField(vm DaifugoTableVM) {
+	<section class="bg-emerald-900/30 border border-emerald-800 rounded-xl p-4 space-y-3">
+		<div class="flex flex-wrap items-center gap-x-3 gap-y-1">
+			<h2 class="text-sm text-emerald-400">場</h2>
+			if vm.FieldEmpty {
+				<span class="text-sm text-emerald-300">空 — 好きな手を出せます (親番)</span>
+			} else {
+				<span class="font-semibold">{ vm.FieldLabel }</span>
+				if vm.FieldOwner != "" {
+					<span class="text-sm text-emerald-400">({ vm.FieldOwner } が出した手)</span>
+				}
+			}
+		</div>
+		if len(vm.Pile) > 0 {
+			<div class="flex flex-wrap items-end gap-x-4 gap-y-3">
+				for _, p := range vm.Pile {
+					<div class="flex flex-col items-center gap-1">
+						<span
+							class={ "text-xs",
+								templ.KV("text-amber-300 font-semibold", p.IsYou),
+								templ.KV("text-emerald-400", !p.IsYou) }
+						>
+							{ p.Name }
+						</span>
+						if p.Passed {
+							<span class="inline-flex items-center justify-center w-14 h-20 rounded-md border-2 border-dashed border-emerald-800 text-xs text-emerald-600">
+								パス
+							</span>
+						} else {
+							<div class="flex gap-1">
+								for _, c := range p.Cards {
+									@cardFace(c, p.Current)
+								}
+							</div>
+						}
+						if p.Current {
+							<span class="text-[10px] font-bold text-amber-300">いまの場</span>
+						} else {
+							<span class="text-[10px] text-transparent">.</span>
+						}
+					</div>
+				}
+			</div>
+		}
+	</section>
+}
+
+// 強弱の向きは常に出しておく。革命や Jバックに気づかないまま
+// 「出せるはずなのに出せない」で悩まないように。
+templ daifugoOrderBar(vm DaifugoTableVM) {
+	<section
+		class={ "rounded-lg border px-3 py-2 text-xs space-y-0.5",
+			templ.KV("border-rose-500 bg-rose-900/40", vm.Reversed),
+			templ.KV("border-emerald-800 bg-emerald-900/20", !vm.Reversed) }
+	>
+		<div class="flex flex-wrap items-center gap-x-2">
+			<span class="text-emerald-400">強さ</span>
+			<span class="font-mono">{ vm.OrderLabel }</span>
+		</div>
+		if vm.OrderNote != "" {
+			<div class={ templ.KV("text-rose-300", vm.Reversed), templ.KV("text-emerald-400", !vm.Reversed) }>
+				{ vm.OrderNote }
+			</div>
+		}
+	</section>
+}
+
+templ daifugoHand(vm DaifugoTableVM) {
+	<section class="bg-emerald-900/40 border border-emerald-800 rounded-lg p-4">
+		<div class="flex flex-wrap items-baseline justify-between gap-2 mb-3">
+			<h2 class="text-sm text-emerald-400">あなたの手札</h2>
+			if vm.YourTurn {
+				if vm.HasPlay {
+					<span class="text-sm text-amber-300 font-semibold">出すカードを選んで「出す」を押してください</span>
+				} else {
+					<span class="text-sm text-rose-300 font-semibold">出せる手がありません。パスしてください</span>
+				}
+			} else {
+				<span class="text-sm text-emerald-500">CPU の手番です</span>
+			}
+		</div>
+		<form method="post" action="/daifugo/play" id="play-form" data-need="0">
+			<div class="flex flex-wrap gap-2">
+				for _, c := range vm.Hand {
+					if vm.YourTurn {
+						// 出せない札も選べるようにしておく。合法手の列挙は
+						// ジョーカーの使い回しまでは作らないので、薄い札が
+						// 絶対に出せないとまでは言い切れない。
+						<label class={ "cursor-pointer", templ.KV("opacity-40", !c.Legal) }>
+							<input type="checkbox" name="card" value={ itoa(c.Number) } class="peer sr-only"/>
+							<span class="block rounded-md peer-checked:-translate-y-2 peer-checked:ring-4 peer-checked:ring-amber-400 transition">
+								@cardFace(c, false)
+							</span>
+						</label>
+					} else {
+						<span class="opacity-60">
+							@cardFace(c, false)
+						</span>
+					}
+				}
+			</div>
+			if vm.YourTurn {
+				<div class="mt-5 flex flex-wrap gap-3 justify-center">
+					<button
+						type="submit"
+						class="bg-amber-500 hover:bg-amber-400 disabled:bg-emerald-800 disabled:text-emerald-600 disabled:cursor-not-allowed text-emerald-950 font-bold rounded px-10 py-2"
+					>
+						出す
+					</button>
+				</div>
+			}
+		</form>
+		if vm.YourTurn && vm.CanPass {
+			<form method="post" action="/daifugo/pass" class="mt-3 flex justify-center">
+				<button type="submit" class="border border-emerald-600 hover:bg-emerald-800 rounded px-10 py-2 font-semibold">
+					パス
+				</button>
+			</form>
+		}
+		if vm.YourTurn && vm.HasPlay {
+			<p class="text-xs text-emerald-500 mt-3">
+				薄いカードは、今の場に出せる手に使えません。
+				if vm.BoundLabel != "" {
+					今は { vm.BoundLabel } の縛りが効いています。
+				}
+				if vm.Strict {
+					激縛り中なので、ちょうど 1 つ上の数字しか出せません。
+				}
+			</p>
+		}
+		if vm.YourTurn {
+			@selectScript()
+		}
+	</section>
+}
+
+// 大富豪は CPU の手が次々に進むので、何が起きたかを履歴で追えるようにする。
+templ daifugoLog(vm DaifugoTableVM) {
+	if len(vm.Events) > 0 {
+		<section class="bg-emerald-900/20 border border-emerald-800 rounded-lg p-4">
+			<h2 class="text-sm text-emerald-400 mb-2">場の流れ</h2>
+			<ul class="space-y-1 text-sm">
+				for _, e := range vm.Events {
+					<li class="flex flex-wrap items-center gap-2">
+						<span class={ templ.KV("text-amber-300", e.IsYou), templ.KV("text-emerald-300", !e.IsYou) }>
+							{ e.Text }
+						</span>
+						for _, c := range e.Cards {
+							<span class="inline-flex items-center rounded bg-white text-xs px-1 py-0.5 leading-none">
+								<span class={ templ.KV("text-rose-600", c.Red), templ.KV("text-slate-900", !c.Red) }>
+									{ c.Suit }{ c.Rank }
+								</span>
+							</span>
+						}
+					</li>
+				}
+			</ul>
+		</section>
+	}
+}
+
+// =============================================
+// Jバックを使うかどうか (任意適用の設定のとき)
+// =============================================
+
+templ daifugoJackBack(vm DaifugoTableVM) {
+	<section class="bg-emerald-900/40 border border-amber-500 rounded-lg p-4 space-y-4">
+		<div>
+			<h2 class="font-semibold">Jバックを使いますか？</h2>
+			<p class="text-sm text-emerald-400 mt-1">
+				使うと、場が流れるまでカードの強弱が反転します (3 がいちばん強くなります)。
+				使わなければ、このまま普通に進みます。
+			</p>
+		</div>
+		if len(vm.JackBackCards) > 0 {
+			<div class="flex flex-wrap gap-2">
+				for _, c := range vm.JackBackCards {
+					@cardFace(c, false)
+				}
+			</div>
+		}
+		<div class="flex flex-wrap gap-3">
+			<form method="post" action="/daifugo/jackback">
+				<input type="hidden" name="apply" value="yes"/>
+				<button type="submit" class="bg-amber-500 hover:bg-amber-400 text-emerald-950 font-bold rounded px-8 py-2">
+					Jバックする
+				</button>
+			</form>
+			<form method="post" action="/daifugo/jackback">
+				<input type="hidden" name="apply" value="no"/>
+				<button type="submit" class="border border-emerald-600 hover:bg-emerald-800 rounded px-8 py-2 font-semibold">
+					しない
+				</button>
+			</form>
+		</div>
+	</section>
+}
+
+// =============================================
+// 10捨て・7渡し
+// =============================================
+// どちらも「手札から N 枚選んで手放す」という同じ形なので、
+// 送り先とことばだけを差し替えて使い回す。
+
+templ daifugoHandOver(vm DaifugoTableVM, action string, title string, verb string) {
+	<section class="bg-emerald-900/40 border border-amber-500 rounded-lg p-4">
+		<div class="flex flex-wrap items-baseline gap-x-3 gap-y-1 mb-3">
+			<h2 class="font-semibold">
+				{ title }: { verb }カードを { itoa(vm.HandOverNeed) } 枚選んでください
+			</h2>
+			<p id="select-status" class="text-sm text-amber-300">
+				あと { itoa(vm.HandOverNeed) } 枚
+			</p>
+		</div>
+		if vm.HandOverToName != "" {
+			<p class="text-sm text-emerald-400 mb-3">
+				渡す相手は { vm.HandOverToName } です。相手の手札はその分だけ増えます。
+			</p>
+		}
+		<form method="post" action={ templ.SafeURL(action) } id="play-form" data-need={ itoa(vm.HandOverNeed) }>
+			<div class="flex flex-wrap gap-2">
+				for _, c := range vm.Hand {
+					<label class="cursor-pointer">
+						<input type="checkbox" name="card" value={ itoa(c.Number) } class="peer sr-only"/>
+						<span class="block rounded-md peer-checked:-translate-y-2 peer-checked:ring-4 peer-checked:ring-amber-400 transition">
+							@cardFace(c, false)
+						</span>
+					</label>
+				}
+			</div>
+			<div class="mt-5 flex justify-center">
+				<button
+					type="submit"
+					class="bg-amber-500 hover:bg-amber-400 disabled:bg-emerald-800 disabled:text-emerald-600 disabled:cursor-not-allowed text-emerald-950 font-bold rounded px-10 py-2"
+				>
+					{ verb }
+				</button>
+			</div>
+		</form>
+		@selectScript()
+	</section>
+}
+
+// =============================================
+// カード交換
+// =============================================
+
+templ daifugoExchange(vm DaifugoTableVM) {
+	<section class="bg-emerald-900/40 border border-emerald-800 rounded-lg p-4">
+		<div class="flex flex-wrap items-baseline gap-x-3 gap-y-1 mb-4">
+			<h2 class="font-semibold">
+				{ vm.ExchangeToName } へ渡すカードを { itoa(vm.ExchangeNeed) } 枚選んでください
+			</h2>
+			<p id="select-status" class="text-sm text-amber-300">
+				あと { itoa(vm.ExchangeNeed) } 枚
+			</p>
+		</div>
+		<p class="text-sm text-emerald-400 mb-3">
+			あなたは上位のプレイヤーなので、どのカードを渡しても構いません。
+			下位のプレイヤーからは、いちばん強いカードが自動で渡されます。
+		</p>
+		<form method="post" action="/daifugo/exchange" id="play-form" data-need={ itoa(vm.ExchangeNeed) }>
+			<div class="flex flex-wrap gap-2">
+				for _, c := range vm.Hand {
+					<label class="cursor-pointer">
+						<input type="checkbox" name="card" value={ itoa(c.Number) } class="peer sr-only"/>
+						<span class="block rounded-md peer-checked:-translate-y-2 peer-checked:ring-4 peer-checked:ring-amber-400 transition">
+							@cardFace(c, false)
+						</span>
+					</label>
+				}
+			</div>
+			<div class="mt-5 flex justify-center">
+				<button
+					type="submit"
+					class="bg-amber-500 hover:bg-amber-400 disabled:bg-emerald-800 disabled:text-emerald-600 disabled:cursor-not-allowed text-emerald-950 font-bold rounded px-10 py-2"
+				>
+					渡す
+				</button>
+			</div>
+		</form>
+		@selectScript()
+	</section>
+}
+
+// =============================================
+// ゲーム結果
+// =============================================
+
+templ daifugoRoundResult(vm DaifugoTableVM) {
+	<section class="bg-emerald-900/40 border border-emerald-800 rounded-lg p-4">
+		<h2 class="font-semibold mb-3">第 { itoa(vm.GameNo) } ゲームの結果</h2>
+		<table class="w-full text-sm">
+			<thead class="text-emerald-400 border-b border-emerald-800">
+				<tr>
+					<th class="text-left py-1">順位</th>
+					<th class="text-left py-1">プレイヤー</th>
+					<th class="text-left py-1">称号</th>
+					<th class="text-right py-1">獲得</th>
+					<th class="text-right py-1">累計</th>
+				</tr>
+			</thead>
+			<tbody>
+				for _, r := range vm.Ranking {
+					<tr class="border-b border-emerald-900">
+						<td class="py-1">{ itoa(r.Rank) } 位</td>
+						<td class={ "py-1", templ.KV("text-amber-300 font-semibold", r.IsYou) }>
+							{ r.Name }
+							if r.Note != "" {
+								<span class="text-rose-400 text-xs ml-1">({ r.Note })</span>
+							}
+						</td>
+						<td class="py-1">{ r.Title }</td>
+						<td class="text-right">+{ itoa(r.Delta) }</td>
+						<td class="text-right">{ itoa(r.Total) }</td>
+					</tr>
+				}
+			</tbody>
+		</table>
+		<form method="post" action="/daifugo/next" class="mt-4 flex justify-center">
+			<button type="submit" class="bg-emerald-600 hover:bg-emerald-500 rounded px-8 py-2 font-semibold">
+				if vm.LastGame {
+					最終結果へ
+				} else {
+					次のゲームへ
+				}
+			</button>
+		</form>
+	</section>
+}
+
+templ daifugoGameOver(vm DaifugoTableVM) {
+	<section class="bg-emerald-900/40 border border-emerald-800 rounded-lg p-6 text-center space-y-4">
+		<h2 class="text-2xl font-bold">
+			if vm.YouWin {
+				<span class="text-amber-300">あなたの勝ちです！</span>
+			} else {
+				<span>{ vm.WinnerName } の勝ちです</span>
+			}
+		</h2>
+		<table class="w-full max-w-sm mx-auto text-sm">
+			<tbody>
+				for _, s := range vm.Seats {
+					<tr class="border-b border-emerald-900">
+						<td class={ "py-1 text-left", templ.KV("text-amber-300 font-semibold", s.IsYou) }>{ s.Name }</td>
+						<td class="py-1 text-right">{ itoa(s.Score) } 点</td>
+					</tr>
+				}
+			</tbody>
+		</table>
+		<div class="flex flex-wrap gap-3 justify-center">
+			<form method="post" action="/daifugo/new">
+				<button type="submit" class="bg-amber-500 hover:bg-amber-400 text-emerald-950 font-bold rounded px-8 py-2">
+					同じルールでもう一度
+				</button>
+			</form>
+			<form method="post" action="/daifugo/setup">
+				<button type="submit" class="border border-emerald-600 hover:bg-emerald-800 rounded px-8 py-2 font-semibold">
+					ルールを選び直す
+				</button>
+			</form>
+		</div>
+	</section>
+}
+
+// =============================================
+// 複数枚を選ぶフォームの補助
+// =============================================
+// data-need が 0 なら「1 枚以上なら何枚でも」、そうでなければちょうどその枚数。
+
+templ selectScript() {
+	<script type="text/javascript">
+		(function () {
+			var form = document.getElementById("play-form");
+			if (!form) return;
+			var need = Number(form.dataset.need || "0");
+			var boxes = form.querySelectorAll('input[name="card"]');
+			var submit = form.querySelector('button[type="submit"]');
+			var status = document.getElementById("select-status");
+			function sync() {
+				var n = 0;
+				boxes.forEach(function (b) { if (b.checked) n++; });
+				if (need > 0) {
+					boxes.forEach(function (b) { b.disabled = !b.checked && n >= need; });
+					if (submit) submit.disabled = n !== need;
+					if (status) {
+						status.textContent = n === need ? "選び終わりました" : "あと " + (need - n) + " 枚";
+					}
+				} else {
+					if (submit) submit.disabled = n === 0;
+					if (status) status.textContent = n + " 枚選択中";
+				}
+			}
+			boxes.forEach(function (b) { b.addEventListener("change", sync); });
+			sync();
+		})();
+	</script>
+}

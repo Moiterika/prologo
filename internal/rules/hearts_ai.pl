@@ -22,11 +22,7 @@ by_rank(Cards, Sorted) :-
               rank_value(R, V) ),
             Pairs),
     keysort(Pairs, SortedPairs),
-    pairs_values(SortedPairs, Sorted).
-
-pairs_values([], []).
-pairs_values([_-V|T], [V|Vs]) :-
-    pairs_values(T, Vs).
+    pairs_values(SortedPairs, Sorted).   % pairs_values/2 は compat.pl
 
 lowest(Cards, Low) :-
     by_rank(Cards, [Low|_]).
@@ -136,9 +132,4 @@ pass_danger(card(_, R), D) :-
     rank_value(R, V),
     D is V.
 
-take(0, _, []) :- !.
-take(_, [], []) :- !.
-take(N, [X|Xs], [X|Ys]) :-
-    N > 0,
-    N1 is N - 1,
-    take(N1, Xs, Ys).
+% take/3 は compat.pl にある。

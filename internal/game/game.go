@@ -11,6 +11,7 @@ import (
 	"math/rand"
 	"sort"
 
+	"hearts/internal/playerr"
 	"hearts/internal/rules"
 )
 
@@ -30,12 +31,11 @@ const HumanSeat = 0
 
 // ErrPlayerInput は「入力がルール上おかしい」ことを表す。
 // サーバーはこれを 500 ではなく画面上のメッセージとして扱う。
-type ErrPlayerInput struct{ Msg string }
-
-func (e ErrPlayerInput) Error() string { return e.Msg }
+// 3 つのゲームで同じ型を使う (internal/playerr)。
+type ErrPlayerInput = playerr.Error
 
 func inputErr(format string, a ...interface{}) error {
-	return ErrPlayerInput{Msg: fmt.Sprintf(format, a...)}
+	return playerr.Errorf(format, a...)
 }
 
 // Game は 1 ゲーム分の状態。並行安全ではない。

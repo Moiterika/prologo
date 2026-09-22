@@ -5,7 +5,7 @@
 // Go から問い合わせるための薄い橋渡しをするだけで、ルールを Go で書き直しては
 // いない。
 //
-//	compat.pl       … SWI 固有述語の互換レイヤ (hearts.pl を無修正で読むため)
+//	compat.pl       … SWI 固有述語の互換レイヤ (internal/plog が持つ共通のもの)
 //	hearts.pl       … 元のルール定義 (変更なし)
 //	hearts_rules.pl … ハートブレイク・第1トリック・パス・精算などの追加規則
 //	hearts_ai.pl    … CPU の思考
@@ -15,118 +15,39 @@ package rules
 
 import (
 	"embed"
-	"errors"
-	"fmt"
-	"os"
-	"path/filepath"
-	"strconv"
-	"strings"
 
-	"github.com/ichiban/prolog"
-	"github.com/ichiban/prolog/engine"
+	"fmt"
+
+	"hearts/internal/cards"
+	"hearts/internal/plog"
 )
 
-//go:embed compat.pl hearts.pl hearts_rules.pl hearts_ai.pl
+//go:embed hearts.pl hearts_rules.pl hearts_ai.pl
 var prologFS embed.FS
 
-// 読み込み順序。compat.pl が SWI 固有の述語を補い、hearts.pl は無修正で載る。
-var prologFiles = []string{"compat.pl", "hearts.pl", "hearts_rules.pl", "hearts_ai.pl"}
+// 読み込み順序。この前に internal/plog の compat.pl が読まれ、SWI 固有の
+// 述語を補うので、hearts.pl は無修正のまま載る。
+var prologFiles = []string{"hearts.pl", "hearts_rules.pl", "hearts_ai.pl"}
 
 // =============================================
 // カード
 // =============================================
 
 // Card は Prolog の card(Suit, Rank) に対応する。
-// Suit は "s"/"h"/"d"/"c"、Rank は "2".."10","j","q","k","a"。
-type Card struct {
-	Suit string
-	Rank string
-}
-
-// Term は Prolog の項テキストを返す。スート・ランクは固定語彙なので
-// そのまま埋め込んでよい。
-func (c Card) Term() string {
-	return "card(" + c.Suit + "," + c.Rank + ")"
-}
-
-var atomCard = engine.NewAtom("card")
-
-// Scan は prolog.Scanner を実装し、card(S, R) を Card に変換する。
-// ランクは 2..10 が整数、j/q/k/a がアトムなので両方を受ける。
-func (c *Card) Scan(_ *engine.VM, term engine.Term, env *engine.Env) error {
-	t := env.Resolve(term)
-	cmp, ok := t.(engine.Compound)
-	if !ok || cmp.Functor() != atomCard || cmp.Arity() != 2 {
-		return fmt.Errorf("card/2 ではない項です: %v", t)
-	}
-	suit, ok := atomOrIntText(cmp.Arg(0), env)
-	if !ok {
-		return fmt.Errorf("スートを解釈できません: %v", cmp.Arg(0))
-	}
-	rank, ok := atomOrIntText(cmp.Arg(1), env)
-	if !ok {
-		return fmt.Errorf("ランクを解釈できません: %v", cmp.Arg(1))
-	}
-	c.Suit, c.Rank = suit, rank
-	return nil
-}
-
-func atomOrIntText(term engine.Term, env *engine.Env) (string, bool) {
-	switch v := env.Resolve(term).(type) {
-	case engine.Atom:
-		return v.String(), true
-	case engine.Integer:
-		return strconv.Itoa(int(v)), true
-	default:
-		return "", false
-	}
-}
+// 3 つのゲームで共通なので実体は internal/cards にある。
+type Card = cards.Card
 
 // cardList は Go のカード列を Prolog のリスト項に変換する。
-func cardList(cards []Card) string {
-	terms := make([]string, len(cards))
-	for i, c := range cards {
-		terms[i] = c.Term()
-	}
-	return "[" + strings.Join(terms, ",") + "]"
-}
+func cardList(cs []Card) string { return cards.List(cs) }
+
+func cardListOfLists(hands [][]Card) string { return cards.ListOfLists(hands) }
 
 // Remove は手札から 1 枚を取り除いた新しいスライスを返す。
 // 元のスライスは変更しない。同じカードが無ければそのまま返す。
-func Remove(hand []Card, card Card) []Card {
-	for i, c := range hand {
-		if c == card {
-			return append(hand[:i:i], hand[i+1:]...)
-		}
-	}
-	return hand
-}
+func Remove(hand []Card, card Card) []Card { return cards.Remove(hand, card) }
 
-// IndexOf は cards の中で target が何番目かを返す。無ければ -1。
-func IndexOf(cards []Card, target Card) int {
-	for i, c := range cards {
-		if c == target {
-			return i
-		}
-	}
-	return -1
-}
-
-func cardListOfLists(hands [][]Card) string {
-	terms := make([]string, len(hands))
-	for i, h := range hands {
-		terms[i] = cardList(h)
-	}
-	return "[" + strings.Join(terms, ",") + "]"
-}
-
-func intList(xs []int) string {
-	terms := make([]string, len(xs))
-	for i, x := range xs {
-		terms[i] = strconv.Itoa(x)
-	}
-	return "[" + strings.Join(terms, ",") + "]"
-}
+// IndexOf は cs の中で target が何番目かを返す。無ければ -1。
+func IndexOf(cs []Card, target Card) int { return cards.IndexOf(cs, target) }
 
 // leadTerm は台札を表す項。リード(台札なし)は nil。
 func leadTerm(lead *Card) string {
@@ -136,12 +57,8 @@ func leadTerm(lead *Card) string {
 	return lead.Term()
 }
 
-func boolAtom(b bool) string {
-	if b {
-		return "true"
-	}
-	return "false"
-}
+func intList(xs []int) string { return plog.Ints(xs) }
+func boolAtom(b bool) string  { return plog.Atom(b) }
 
 // =============================================
 // Prolog エンジン
@@ -152,7 +69,7 @@ func boolAtom(b bool) string {
 // Engine は並行安全ではない。同時に複数の対局を進める場合は、対局ごとに
 // 1 つずつ作ること。
 type Engine struct {
-	p          *prolog.Interpreter
+	p          *plog.Interp
 	rankValues map[string]int // 表示用に hearts.pl の rank_value/2 を取り込んだもの
 }
 
@@ -160,25 +77,9 @@ type Engine struct {
 // dir が空なら実行ファイルに埋め込んだものを、そうでなければそのディレクトリの
 // .pl を読む (hearts.pl を書き換えて挙動を試したいとき用)。
 func New(dir string) (*Engine, error) {
-	// Prolog 側に標準入力は与えない (端末入力は Go の UI が独占する)。
-	p := prolog.New(strings.NewReader(""), os.Stdout)
-
-	for _, name := range prologFiles {
-		var (
-			src []byte
-			err error
-		)
-		if dir == "" {
-			src, err = prologFS.ReadFile(name)
-		} else {
-			src, err = os.ReadFile(filepath.Join(dir, name))
-		}
-		if err != nil {
-			return nil, fmt.Errorf("%s の読み込みに失敗しました: %w", name, err)
-		}
-		if err := p.Exec(string(src)); err != nil {
-			return nil, fmt.Errorf("%s の解釈に失敗しました: %w", name, err)
-		}
+	p, err := plog.New(prologFS, dir, prologFiles)
+	if err != nil {
+		return nil, err
 	}
 
 	r := &Engine{p: p, rankValues: map[string]int{}}
@@ -201,33 +102,15 @@ func New(dir string) (*Engine, error) {
 
 // scan は最初の解を dest に取り込む。解が無い場合は errNoSolution を返す。
 func (r *Engine) scan(query string, dest interface{}) error {
-	sol := r.p.QuerySolution(query)
-	if err := sol.Err(); err != nil {
-		if errors.Is(err, prolog.ErrNoSolutions) {
-			return errNoSolution
-		}
-		return fmt.Errorf("問い合わせ %s に失敗しました: %w", query, err)
-	}
-	if dest == nil {
-		return nil
-	}
-	return sol.Scan(dest)
+	return r.p.Scan(query, dest)
 }
 
 // prove はゴールが成功するかどうかだけを判定する。
 func (r *Engine) prove(query string) (bool, error) {
-	err := r.scan(query, nil)
-	switch {
-	case err == nil:
-		return true, nil
-	case errors.Is(err, errNoSolution):
-		return false, nil
-	default:
-		return false, err
-	}
+	return r.p.Prove(query)
 }
 
-var errNoSolution = errors.New("解がありません")
+var errNoSolution = plog.ErrNoSolution
 
 // --- hearts.pl の設定値 ---
 

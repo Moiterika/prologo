@@ -18,7 +18,7 @@ func newTestServer(t *testing.T) (*httptest.Server, *http.Client) {
 	t.Helper()
 
 	mux := http.NewServeMux()
-	NewServer("", 0, 100, 0).Routes(mux)
+	NewServer(Config{Limit: 100}).Routes(mux)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 

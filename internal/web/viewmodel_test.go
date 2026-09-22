@@ -15,6 +15,7 @@ func TestSeatAreas(t *testing.T) {
 		3: {"bottom", "left", "right"},
 		4: {"bottom", "left", "top", "right"},
 		5: {"bottom", "left", "topleft", "topright", "right"},
+		6: {"bottom", "left", "topleft", "top", "topright", "right"},
 	}
 	for players, want := range cases {
 		got := seatAreas(players)

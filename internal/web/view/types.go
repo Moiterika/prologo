@@ -132,3 +132,11 @@ func seatFlow(area string) string {
 		return "flex-col"
 	}
 }
+
+// signed は符号つきで数値を書き出す。ナポレオンの得点は正負どちらもある。
+func signed(n int) string {
+	if n > 0 {
+		return "+" + strconv.Itoa(n)
+	}
+	return strconv.Itoa(n)
+}

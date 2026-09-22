@@ -22,6 +22,8 @@ run:
 # ルールパッケージのドキュメントを端末に出す (Example 付き)
 doc:
 	go doc -all ./internal/rules
+	go doc -all ./internal/rules/daifugo
+	go doc -all ./internal/rules/napoleon
 
 # ブラウザでドキュメントを見る。起動後 数秒待ってから
 # http://127.0.0.1:6060/pkg/hearts/internal/rules/ を開く。
