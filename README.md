@@ -503,6 +503,18 @@ go test -count=1 ./...    # (make test)
 go test -run Example -v ./internal/rules
 ```
 
+## リリース手順（このリポジトリ管理者向け）
+
+```
+go build -trimpath -ldflags "-s -w" -o game.exe ./cmd/game
+Compress-Archive -Path game.exe, LICENSE, README.md -DestinationPath prologo-windows-amd64.zip
+```
+
+1. リポジトリのページで「Releases」→「Draft a new release」を開きます。
+1. 「Choose a tag」に v{YYYY-MM-DD} と入力して、タグを新しく作ります。
+1. タイトルと説明を書き、prologo-windows-amd64.zip を「Attach binaries」の欄にドラッグします。
+1. 「Publish release」を押します。
+
 ## ライセンス
 
 Copyright (c) 2026 Moiterika LLC.
