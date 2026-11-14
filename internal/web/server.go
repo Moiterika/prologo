@@ -115,13 +115,12 @@ func (s *Server) routesHearts(mux *http.ServeMux) {
 	mux.HandleFunc("POST /hearts/next", s.postNext)
 	mux.HandleFunc("POST /hearts/new", s.postNew)
 	mux.HandleFunc("POST /hearts/setup", s.postSetup)
-	mux.HandleFunc("POST /hearts/preset", s.postPreset)
 	mux.HandleFunc("POST /hearts/quit", s.quit(func(sess *session) { sess.game = nil }))
 
 	// JavaScript を切った状態で操作したあとリロードすると、ブラウザは
 	// POST 先を GET しに来る。ゲームの状態はサーバーが持っているので、
 	// 今の画面へ戻すだけでよい。
-	for _, path := range []string{"start", "pass", "play", "next", "new", "setup", "preset", "quit"} {
+	for _, path := range []string{"start", "pass", "play", "next", "new", "setup", "quit"} {
 		mux.HandleFunc("GET /hearts/"+path, func(w http.ResponseWriter, r *http.Request) {
 			http.Redirect(w, r, "/hearts", http.StatusSeeOther)
 		})
@@ -281,6 +280,7 @@ func (s *Server) postStart(w http.ResponseWriter, r *http.Request) {
 		r.FormValue("points"),
 		r.FormValue("lead"),
 		r.FormValue("hearts_break"),
+		r.FormValue("scoring"),
 	)
 	g, err := s.StartGame(sess.engine, sess.opts)
 	if err != nil {
@@ -301,28 +301,6 @@ func (s *Server) postSetup(w http.ResponseWriter, r *http.Request) {
 
 	sess.game = nil
 	s.render(w, r, sess, "")
-}
-
-// postPreset はルール選択の画面で、流儀をプリセットの組み合わせに
-// 置き換える。ゲームはまだ始めず、選び直した画面を返す。
-func (s *Server) postPreset(w http.ResponseWriter, r *http.Request) {
-	sess, ok := s.lockedSession(w, r, s.heartsSession)
-	if !ok {
-		return
-	}
-	defer sess.mu.Unlock()
-
-	var notice string
-	if sess.game == nil {
-		name := r.FormValue("preset")
-		sess.opts = sess.opts.WithPreset(name)
-		for _, p := range rules.Presets() {
-			if p.Name == name {
-				notice = "「" + p.Label + "」の組み合わせにしました。このまま始めるか、ここから選び直してください。"
-			}
-		}
-	}
-	s.render(w, r, sess, notice)
 }
 
 func (s *Server) postPass(w http.ResponseWriter, r *http.Request) {

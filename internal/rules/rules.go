@@ -212,6 +212,31 @@ func (r *Engine) SetHeartsBreakRule(mode HeartsBreakRule) error {
 	return nil
 }
 
+// ScoringRule はスラムの精算と、得点の数え方の流儀。
+type ScoringRule string
+
+const (
+	// ScoringSlamOthers はスラム達成者が 0 点、他全員が満点失点の流儀 (既定)。
+	ScoringSlamOthers ScoringRule = "slam_others"
+	// ScoringSlamZero はスラム達成者を 0 点扱いにするだけの流儀。
+	ScoringSlamZero ScoringRule = "slam_zero"
+	// ScoringLife は持ち点から失点を引いていく体力制。
+	// スラム達成者は満点ぶん回復する。
+	ScoringLife ScoringRule = "life"
+)
+
+// SetScoringRule はスラムの精算の流儀を切り替える。
+func (r *Engine) SetScoringRule(mode ScoringRule) error {
+	ok, err := r.prove(fmt.Sprintf("set_scoring_rule(%s).", mode))
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("得点の数え方の指定が不正です: %q", mode)
+	}
+	return nil
+}
+
 // Deck は hearts_rules.pl の deck/1 (hearts.pl の suit/1, rank/1,
 // excluded_cards/1 から生成される)。
 func (r *Engine) Deck() ([]Card, error) {

@@ -49,7 +49,11 @@ templ statusBar(vm TableVM) {
 				<span class="text-emerald-500">♥ 未ブレイク</span>
 			}
 		}
-		<span class="ml-auto text-emerald-500">{ itoa(vm.Limit) } 点で終了</span>
+		if vm.Life {
+			<span class="ml-auto text-emerald-500">持ち点 { itoa(vm.Limit) } から / 0 点以下で終了</span>
+		} else {
+			<span class="ml-auto text-emerald-500">{ itoa(vm.Limit) } 点で終了</span>
+		}
 		if vm.Phase != "game_over" {
 			@quitButton("/hearts/quit")
 		}
@@ -67,7 +71,7 @@ templ scoreStrip(vm TableVM) {
 		for _, s := range vm.Seats {
 			<div class="flex items-baseline gap-2 rounded-lg border border-emerald-800 bg-emerald-900/40 px-3 py-1.5">
 				<span class={ "text-sm font-semibold", templ.KV("text-amber-300", s.IsYou) }>{ s.Name }</span>
-				<span class="text-xs text-emerald-400">累計 { itoa(s.Total) }</span>
+				<span class="text-xs text-emerald-400">{ totalLabel(vm.Life) } { itoa(s.Total) }</span>
 			</div>
 		}
 	</section>
@@ -84,7 +88,7 @@ templ tableCircle(vm TableVM) {
 		<div class="grid grid-cols-3 grid-rows-3 gap-2 place-items-center">
 			for _, s := range vm.Seats {
 				<div class={ "flex items-center justify-center gap-2", seatArea(s.Area), seatFlow(s.Area) }>
-					@seatPlate(s)
+					@seatPlate(s, vm.Life)
 					@seatCard(s)
 				</div>
 			}
@@ -95,15 +99,15 @@ templ tableCircle(vm TableVM) {
 	</section>
 }
 
-// seatPlate は名札。累計失点とこのラウンドの獲得を出す。
-templ seatPlate(s SeatVM) {
+// seatPlate は名札。累計失点 (体力制では持ち点) とこのラウンドの獲得を出す。
+templ seatPlate(s SeatVM, life bool) {
 	<div
 		class={ "rounded-lg border px-3 py-2 text-center min-w-24",
 			templ.KV("border-amber-400 bg-emerald-900", s.Turn),
 			templ.KV("border-emerald-800 bg-emerald-900/40", !s.Turn) }
 	>
 		<div class={ "font-semibold text-sm", templ.KV("text-amber-300", s.IsYou) }>{ s.Name }</div>
-		<div class="text-xs text-emerald-400 mt-0.5">累計 { itoa(s.Total) }</div>
+		<div class="text-xs text-emerald-400 mt-0.5">{ totalLabel(life) } { itoa(s.Total) }</div>
 		<div class="text-xs text-emerald-500">
 			本局 { itoa(s.RoundTaken) } 点 / { itoa(s.TakenCount) } 枚
 		</div>
@@ -291,7 +295,7 @@ templ roundResult(vm TableVM) {
 		if vm.SlammerName != "" {
 			<p class="bg-amber-500 text-emerald-950 font-bold rounded p-3 mb-3">
 				スラム達成！ { vm.SlammerName } が全 { itoa(vm.MaxPoints) } 点を独占したので、
-				本人は 0 点、他の全員が { itoa(vm.MaxPoints) } 点です。
+				{ vm.SlamText }
 			</p>
 		}
 		<table class="w-full text-sm">
@@ -301,7 +305,7 @@ templ roundResult(vm TableVM) {
 					<th class="text-right py-1">獲得</th>
 					<th class="text-right py-1">素点</th>
 					<th class="text-right py-1">このラウンド</th>
-					<th class="text-right py-1">累計</th>
+					<th class="text-right py-1">{ totalLabel(vm.Life) }</th>
 				</tr>
 			</thead>
 			<tbody>
@@ -310,7 +314,7 @@ templ roundResult(vm TableVM) {
 						<td class={ "py-1", templ.KV("text-amber-300 font-semibold", s.IsYou) }>{ s.Name }</td>
 						<td class="text-right">{ itoa(s.TakenCount) } 枚</td>
 						<td class="text-right">{ itoa(s.RoundTaken) }</td>
-						<td class="text-right font-semibold">+{ itoa(s.RoundDelta) }</td>
+						<td class="text-right font-semibold">{ signed(s.RoundDelta) }</td>
 						<td class="text-right">{ itoa(s.Total) }</td>
 					</tr>
 				}

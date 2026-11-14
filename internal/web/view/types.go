@@ -10,6 +10,14 @@ import "strconv"
 // itoa はテンプレートから数値を書き出すための小さな補助。
 func itoa(n int) string { return strconv.Itoa(n) }
 
+// totalLabel は得点表の見出し。体力制では持ち点、それ以外は累計失点。
+func totalLabel(life bool) string {
+	if life {
+		return "持ち点"
+	}
+	return "累計"
+}
+
 // OptionVM は設定画面のラジオボタン 1 個。
 type OptionVM struct {
 	Value       string
@@ -20,11 +28,11 @@ type OptionVM struct {
 
 // SetupVM はゲーム開始前のルール選択画面。
 type SetupVM struct {
-	Presets            []PresetVM
 	Notice             string // プリセットを反映したときの案内
 	PointsOptions      []OptionVM
 	LeadOptions        []OptionVM
 	HeartsBreakOptions []OptionVM
+	ScoringOptions     []OptionVM
 	MaxPoints          int
 	Limit              int
 }
@@ -42,10 +50,10 @@ type CardVM struct {
 type SeatVM struct {
 	Name       string
 	IsYou      bool
-	Total      int  // 累計失点
+	Total      int  // 累計失点。体力制では持ち点
 	RoundTaken int  // このラウンドで取った失点
 	TakenCount int  // このラウンドで取った枚数
-	RoundDelta int  // このラウンドの確定失点 (ラウンド結果でのみ使う)
+	RoundDelta int  // このラウンドの点数の増減 (ラウンド結果でのみ使う)。体力制では持ち点の増減
 	Turn       bool // 今この人の手番か
 
 	// 円卓のどこに置くか: bottom / left / top / right / topleft / topright
@@ -83,6 +91,7 @@ type TableVM struct {
 
 	// ラウンド終了 (round_done)
 	SlammerName string // スラム達成者。いなければ空
+	SlamText    string // スラムの精算の説明
 
 	// ゲーム終了 (game_over)
 	WinnerName string
@@ -94,6 +103,9 @@ type TableVM struct {
 
 	// ハートブレイク規則を使う設定のときだけ、その状態を表示する
 	ShowHeartsBreak bool
+
+	// 体力制 (持ち点から減らしていく) か
+	Life bool
 	HeartsBroken    bool
 
 	YourTurn bool

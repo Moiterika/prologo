@@ -115,7 +115,7 @@ func buildNapoleonTableVM(g *ngame.Game, errMsg string) (view.NapoleonTableVM, e
 		hand = append(hand, napoleonCardVM(c, i+1, legalSet[c]))
 	}
 
-	got, err := g.NapoleonPoints()
+	got, err := g.KnownNapoleonPoints()
 	if err != nil {
 		return view.NapoleonTableVM{}, err
 	}
@@ -130,11 +130,12 @@ func buildNapoleonTableVM(g *ngame.Game, errMsg string) (view.NapoleonTableVM, e
 		WidowSize:   g.WidowSize(),
 		MaxPoints:   g.MaxPoints(),
 		GotPoints:   got,
+		AideHidden:  g.NapoleonSeat() >= 0 && !g.AideRevealed() && g.AideSeat() != ngame.HumanSeat,
 		TrickNo:     g.TrickNo(),
 		TrickTotal:  g.TrickTotal(),
 		TrickPoints: g.TrickPoints(),
 		CenterText:  napoleonCenterText(g),
-		Solo:        g.Solo(),
+		Solo:        g.Solo() && g.AideRevealed(),
 		RuleLabels:  g.Options().Labels(),
 		Notice:      g.Notice(),
 		Error:       errMsg,
@@ -214,13 +215,12 @@ func napoleonRole(g *ngame.Game, pi int) string {
 	if pi == g.NapoleonSeat() {
 		return "ナポレオン"
 	}
-	if g.Solo() {
-		return "連合軍"
-	}
-	if !g.AideRevealed() {
+	// 人間は自分の手札に指名カードがあるかどうかで自分の立場だけは分かる
+	known := g.AideRevealed() || pi == ngame.HumanSeat
+	if !known {
 		return "？"
 	}
-	if pi == g.AideSeat() {
+	if !g.Solo() && pi == g.AideSeat() {
 		return "副官"
 	}
 	return "連合軍"

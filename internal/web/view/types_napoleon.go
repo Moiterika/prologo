@@ -80,6 +80,7 @@ type NapoleonTableVM struct {
 	Solo          bool
 	MaxPoints     int
 	GotPoints     int // ナポレオン軍がこれまでに取った絵札
+	AideHidden    bool // 副官が未判明で、GotPoints に副官の分を含めていない
 
 	TrickNo    int
 	TrickTotal int

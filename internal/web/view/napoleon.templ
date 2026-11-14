@@ -96,7 +96,11 @@ templ napoleonStatus(vm NapoleonTableVM) {
 					</span>
 				</span>
 			}
-			<span>ナポレオン軍 <span class="font-bold text-amber-300">{ itoa(vm.GotPoints) }</span> / { itoa(vm.MaxPoints) } 枚</span>
+			if vm.AideHidden {
+				<span>ナポレオン <span class="font-bold text-amber-300">{ itoa(vm.GotPoints) }</span> / { itoa(vm.MaxPoints) } 枚 (副官の分は未判明)</span>
+			} else {
+				<span>ナポレオン軍 <span class="font-bold text-amber-300">{ itoa(vm.GotPoints) }</span> / { itoa(vm.MaxPoints) } 枚</span>
+			}
 		} else if vm.CurrentBid != "" {
 			<span>今の宣言 { vm.CurrentBid }</span>
 		}

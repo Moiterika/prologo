@@ -5,6 +5,7 @@ package web
 
 import (
 	"fmt"
+	"strconv"
 
 	"hearts/internal/game"
 	"hearts/internal/rules"
@@ -75,6 +76,25 @@ func buildSetupVM(engine *rules.Engine, current rules.Options, limit int, notice
 		},
 	}
 
+	m, l := strconv.Itoa(maxPoints), strconv.Itoa(limit)
+	scoring := []view.OptionVM{
+		{
+			Value:       string(rules.ScoringLife),
+			Label:       "体力制 (持ち点 " + l + " から減らしていく)",
+			Description: "全員 " + l + " 点の持ち点から始め、取った失点を引いていきます。誰かが 0 点以下になったときの残り点数で勝敗を決めます。スラムを取ると正負が逆転し、" + m + " 点回復します。",
+		},
+		{
+			Value:       string(rules.ScoringSlamZero),
+			Label:       "スラム達成時に 0 点扱い",
+			Description: "失点を足していき、誰かが " + l + " 点に達したら終了します。スラムを取ったラウンドは全員 0 点です。1ラウンドごとに必ず決着へ近づくので、ゲームが早く終わります。",
+		},
+		{
+			Value:       string(rules.ScoringSlamOthers),
+			Label:       "スラム達成時に 0 点扱い、他の全員に " + m + " 失点",
+			Description: "失点を足していき、誰かが " + l + " 点に達したら終了します。スラムの報酬が大きく、他のプレイヤーが飛びやすくなるので、スラムを積極的に狙う動機になります。",
+		},
+	}
+
 	for i := range points {
 		points[i].Checked = points[i].Value == string(current.FirstTrickPoints)
 	}
@@ -84,24 +104,16 @@ func buildSetupVM(engine *rules.Engine, current rules.Options, limit int, notice
 	for i := range heartsBreak {
 		heartsBreak[i].Checked = heartsBreak[i].Value == string(current.HeartsBreak)
 	}
-
-	active := current.PresetName()
-	var presets []view.PresetVM
-	for _, p := range rules.Presets() {
-		presets = append(presets, view.PresetVM{
-			Name:        p.Name,
-			Label:       p.Label,
-			Description: p.Description,
-			Active:      p.Name == active,
-		})
+	for i := range scoring {
+		scoring[i].Checked = scoring[i].Value == string(current.Scoring)
 	}
 
 	return view.SetupVM{
-		Presets:            presets,
 		Notice:             notice,
 		PointsOptions:      points,
 		LeadOptions:        lead,
 		HeartsBreakOptions: heartsBreak,
+		ScoringOptions:     scoring,
 		MaxPoints:          maxPoints,
 		Limit:              limit,
 	}, nil
@@ -133,6 +145,7 @@ func buildTableVM(g *game.Game, errMsg string) (view.TableVM, error) {
 	names := g.Names()
 	scores := g.Scores()
 	final := g.RoundFinal()
+	life := g.Options().UsesLife()
 	areas := seatAreas(len(names))
 
 	// このトリックで誰が何番目に何を出したか
@@ -150,7 +163,7 @@ func buildTableVM(g *game.Game, errMsg string) (view.TableVM, error) {
 		s := view.SeatVM{
 			Name:       name,
 			IsYou:      i == game.HumanSeat,
-			Total:      scores[i],
+			Total:      displayTotal(g, scores[i]),
 			RoundTaken: takenPoints[i],
 			TakenCount: takenCounts[i],
 			Turn:       g.Phase() == game.PhasePlaying && g.Turn() == i,
@@ -159,7 +172,11 @@ func buildTableVM(g *game.Game, errMsg string) (view.TableVM, error) {
 			s.Area = areas[i]
 		}
 		if i < len(final) {
+			// 体力制では失点がそのまま持ち点の減りになる
 			s.RoundDelta = final[i]
+			if life {
+				s.RoundDelta = -final[i]
+			}
 		}
 		if p, ok := plays[i]; ok {
 			card := cardVM(p.card, 0, false)
@@ -209,10 +226,12 @@ func buildTableVM(g *game.Game, errMsg string) (view.TableVM, error) {
 		Notice:          g.Notice(),
 		Error:           errMsg,
 		ShowHeartsBreak: g.Options().UsesHeartsBreak(),
+		Life:            life,
 		RuleLabels: []string{
 			g.Options().LeadLabel(),
 			g.Options().PointsLabel(),
 			g.Options().HeartsBreakLabel(),
+			g.Options().ScoringLabel(),
 		},
 	}
 
@@ -221,6 +240,7 @@ func buildTableVM(g *game.Game, errMsg string) (view.TableVM, error) {
 	}
 	if s := g.RoundSlammer(); s >= 0 {
 		vm.SlammerName = names[s]
+		vm.SlamText = slamText(g)
 	}
 	if g.Phase() == game.PhaseGameOver {
 		w := g.Winner()
@@ -228,6 +248,28 @@ func buildTableVM(g *game.Game, errMsg string) (view.TableVM, error) {
 		vm.YouWin = w == game.HumanSeat
 	}
 	return vm, nil
+}
+
+// displayTotal は名札や得点表に出す点数。
+// 体力制では 開始点 - 累計失点 (持ち点)、それ以外は累計失点そのまま。
+func displayTotal(g *game.Game, score int) int {
+	if g.Options().UsesLife() {
+		return g.Limit() - score
+	}
+	return score
+}
+
+// slamText はスラム達成時の精算の説明。
+func slamText(g *game.Game) string {
+	m := strconv.Itoa(g.MaxPoints())
+	switch g.Options().Scoring {
+	case rules.ScoringLife:
+		return "本人の持ち点が " + m + " 点回復し、他の全員は減りません。"
+	case rules.ScoringSlamZero:
+		return "全員 0 点です。"
+	default:
+		return "本人は 0 点、他の全員が " + m + " 点です。"
+	}
 }
 
 // centerText は円卓の中央に出す一言。

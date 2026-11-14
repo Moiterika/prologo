@@ -70,6 +70,49 @@ func autoStep(t *testing.T, g *Game) {
 	}
 }
 
+// どの得点の数え方でもゲームが最後まで進み、スラムの精算が流儀どおりになる。
+func TestScoringRulesReachGameOver(t *testing.T) {
+	for _, mode := range []rules.ScoringRule{rules.ScoringSlamOthers, rules.ScoringSlamZero, rules.ScoringLife} {
+		t.Run(string(mode), func(t *testing.T) {
+			opts := rules.DefaultOptions()
+			opts.Scoring = mode
+			g := newTestGameOpts(t, 20260811, 50, opts)
+
+			for step := 0; g.Phase() != PhaseGameOver; step++ {
+				if step > 20000 {
+					t.Fatal("ゲームが終わりません")
+				}
+				if g.Phase() == PhaseRoundDone && g.RoundSlammer() >= 0 {
+					sum := 0
+					for _, s := range g.RoundFinal() {
+						sum += s
+					}
+					want := map[rules.ScoringRule]int{
+						rules.ScoringSlamOthers: g.MaxPoints() * (g.Players() - 1),
+						rules.ScoringSlamZero:   0,
+						rules.ScoringLife:       -g.MaxPoints(),
+					}[mode]
+					if sum != want {
+						t.Fatalf("スラムの失点合計 = %d; want %d", sum, want)
+					}
+				}
+				autoStep(t, g)
+			}
+
+			// 体力制でも、持ち点 0 以下 = 累計失点が開始点以上。
+			over := false
+			for _, s := range g.Scores() {
+				if s >= g.Limit() {
+					over = true
+				}
+			}
+			if !over {
+				t.Fatalf("終了したのに誰も上限に達していません: %v", g.Scores())
+			}
+		})
+	}
+}
+
 // 1 ゲームを最後まで通し、局面が正しく遷移して終了することを確かめる。
 func TestFullGameReachesGameOver(t *testing.T) {
 	g := newTestGame(t, 20260811, 50)
@@ -120,9 +163,12 @@ func TestFullGameReachesGameOver(t *testing.T) {
 	}
 }
 
-// 第1トリックは必ず開始カードから始まり、リードした人が先手になる。
+// 「開始カードから」の流儀では、第1トリックは必ず開始カードから始まり、
+// リードした人が先手になる。
 func TestFirstTrickStartsWithOpeningCard(t *testing.T) {
-	g := newTestGame(t, 7, 100)
+	opts := rules.DefaultOptions()
+	opts.FirstTrickLead = rules.LeadOpeningCard
+	g := newTestGameOpts(t, 7, 100, opts)
 
 	// 交換を済ませてトリックプレイに入る
 	for g.Phase() == PhasePassing {

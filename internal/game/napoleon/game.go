@@ -253,6 +253,24 @@ func (g *Game) NapoleonPoints() (int, error) {
 	return total, nil
 }
 
+// KnownNapoleonPoints は人間から見て分かる範囲のナポレオン軍の絵札の数。
+// 副官が判明するまでは副官の取り分を足さない (足すと誰が副官か、
+// 副官がいるかどうかが数字の増え方から割れてしまう)。
+// ただし人間自身が副官なら自分の分は分かっているので足す。
+func (g *Game) KnownNapoleonPoints() (int, error) {
+	if g.aideRevealed || g.aideSeat == HumanSeat {
+		return g.NapoleonPoints()
+	}
+	pts, err := g.TakenPoints()
+	if err != nil {
+		return 0, err
+	}
+	if g.napoleonSeat < 0 {
+		return 0, nil
+	}
+	return pts[g.napoleonSeat], nil
+}
+
 // AideChoices はナポレオンが副官として指名できるカード (手札以外の全て)。
 func (g *Game) AideChoices() []napoleon.Card {
 	out := make([]napoleon.Card, 0, len(g.deck))
@@ -619,13 +637,12 @@ func (g *Game) startTricks() error {
 		}
 	}
 	g.solo = g.aideSeat < 0
-	if g.solo {
-		g.aideRevealed = true
-		g.notice = fmt.Sprintf("%s の指名は %s。持ち主がいないので副官なしのゲームです。",
-			g.names[g.napoleonSeat], cards.Label(g.aideCard))
-	} else {
-		g.notice = fmt.Sprintf("%s は副官として %s を指名しました。",
-			g.names[g.napoleonSeat], cards.Label(g.aideCard))
+	// 副官なしかどうかも伏せる。指名カードが場に出るか精算まで、
+	// 連合軍からは副官の有無も含めて分からない。
+	g.notice = fmt.Sprintf("%s は副官として %s を指名しました。",
+		g.names[g.napoleonSeat], cards.Label(g.aideCard))
+	if g.aideSeat == HumanSeat {
+		g.notice += "あなたが副官です。"
 	}
 
 	g.leader = g.napoleonSeat
@@ -686,10 +703,15 @@ func (g *Game) commit(pi int, card napoleon.Card) error {
 	}
 
 	// 副官のカードが出たら正体が分かる
-	if !g.aideRevealed && !g.solo && card == g.aideCard {
+	if !g.aideRevealed && card == g.aideCard {
 		g.aideRevealed = true
-		g.notice = fmt.Sprintf("%s が %s を出しました。%s が副官です！",
-			g.names[pi], cards.Label(card), g.names[pi])
+		if g.solo {
+			g.notice = fmt.Sprintf("%s が %s を出しました。ナポレオン自身の札なので副官なしのゲームです！",
+				g.names[pi], cards.Label(card))
+		} else {
+			g.notice = fmt.Sprintf("%s が %s を出しました。%s が副官です！",
+				g.names[pi], cards.Label(card), g.names[pi])
+		}
 	}
 
 	g.turn = (pi + 1) % g.players

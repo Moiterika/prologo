@@ -84,6 +84,25 @@ func startDefaultGame(t *testing.T, c *http.Client, base string) string {
 	return startGame(t, c, base, "allow", "opening_card", "off")
 }
 
+// 体力制を選ぶと、持ち点で表示する。
+func TestServerLifeScoring(t *testing.T) {
+	srv, c := newTestServer(t)
+	body := post(t, c, srv.URL+"/hearts/start", url.Values{
+		"points":       {"allow"},
+		"lead":         {"free"},
+		"hearts_break": {"off"},
+		"scoring":      {"life"},
+	})
+	for _, want := range []string{"持ち点 100 から / 0 点以下で終了", "持ち点 100", "体力制 (スラムで回復)"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("体力制の盤面に %q がありません", want)
+		}
+	}
+	if strings.Contains(body, "累計 ") {
+		t.Error("体力制なのに累計失点を出しています")
+	}
+}
+
 // 最初の画面はルール選択。
 func TestServerShowsSetupFirst(t *testing.T) {
 	srv, c := newTestServer(t)
@@ -99,9 +118,12 @@ func TestServerShowsSetupFirst(t *testing.T) {
 		"ハートブレイク（得点札が出るまで♥をリードできない）",
 		// 既定の選択
 		`name="points" value="allow" checked`,
-		`name="lead" value="opening_card" checked`,
+		`name="lead" value="free" checked`,
 		`name="hearts_break" value="off" checked`,
 		`name="hearts_break" value="on"`,
+		`name="scoring" value="life"`,
+		`name="scoring" value="slam_zero"`,
+		`name="scoring" value="slam_others" checked`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("ルール選択画面に %q がありません", want)
@@ -112,7 +134,8 @@ func TestServerShowsSetupFirst(t *testing.T) {
 	inOrder(t, body,
 		"第1トリックのリード",
 		"第1トリックに点数札を出せるか",
-		"ハートブレイク（")
+		"ハートブレイク（",
+		"得点の数え方とスラム")
 
 	// 点数札は制限のゆるい順
 	inOrder(t, body,

@@ -108,6 +108,22 @@ set_hearts_break_rule(Mode) :-
     retractall(hearts_break_rule(_)),
     assertz(hearts_break_rule(Mode)).
 
+% scoring_rule(Mode)  スラム (1人で全失点を独占) の精算
+%   slam_others … 本人 0 点、他全員が満点失点  ※既定
+%   slam_zero   … 本人 0 点 (他の人はもともと 0 点なので、全員 0 点)
+%   life        … 体力制。本人は満点ぶん回復 (失点 -満点)、他全員 0 点
+%
+% 体力制でも、ここで返すのは「失点」。持ち点 = 開始点 - 累計失点 なので、
+% 「持ち点が 0 以下」は「累計失点が開始点以上」と同じになり、
+% 終了判定 (game_over/2) と勝者 (最少失点) は流儀によらず共通に使える。
+:- dynamic scoring_rule/1.
+scoring_rule(slam_others).
+
+set_scoring_rule(Mode) :-
+    member(Mode, [slam_others, slam_zero, life]),
+    retractall(scoring_rule(_)),
+    assertz(scoring_rule(Mode)).
+
 % 第1トリックで出すのを禁じられているカードか
 first_trick_banned(Card) :-
     first_trick_points(Mode),
@@ -228,7 +244,7 @@ raw_scores([Cards|Rest], [S|Ss]) :-
     calculate_score(Cards, S),
     raw_scores(Rest, Ss).
 
-% スラム: 1人で全失点を取ると、その人が0点、他全員が満点失点
+% スラム: 1人で全失点を取ると、scoring_rule/1 に従って精算し直す
 % apply_slam_rule(素点リスト, 確定点リスト, 達成者)
 %   達成者は 0始まりのプレイヤー番号。達成者がいない場合は -1。
 apply_slam_rule(Raw, Final, Slammer) :-
@@ -245,12 +261,23 @@ apply_slam_rule(Raw, Final, Slammer) :-
 
 slam_final([], _, _, _, []).
 slam_final([_|T], I, Idx, Total, [S|Rest]) :-
+    scoring_rule(Mode),
     (   Idx =:= I
-    ->  S = 0
-    ;   S = Total
+    ->  slam_score_self(Mode, Total, S)
+    ;   slam_score_other(Mode, Total, S)
     ),
     Idx1 is Idx + 1,
     slam_final(T, I, Idx1, Total, Rest).
+
+% slam_score_self(流儀, 満点, 達成者の失点)
+slam_score_self(slam_others, _, 0).
+slam_score_self(slam_zero, _, 0).
+slam_score_self(life, Total, S) :- S is -Total.
+
+% slam_score_other(流儀, 満点, 達成者以外の失点)
+slam_score_other(slam_others, Total, Total).
+slam_score_other(slam_zero, _, 0).
+slam_score_other(life, _, 0).
 
 % ラウンド精算のまとめ
 % round_scores(取ったカード束のリスト, 確定点リスト, スラム達成者)

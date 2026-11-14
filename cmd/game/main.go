@@ -23,7 +23,7 @@ import (
 
 func main() {
 	addr := flag.String("addr", "127.0.0.1:8080", "待ち受けアドレス")
-	limit := flag.Int("limit", 100, "ハート: この失点に達したらゲーム終了")
+	limit := flag.Int("limit", 100, "ハート: この失点に達したらゲーム終了 (体力制では開始時の持ち点)")
 	players := flag.Int("players", 0, "ハート: 人数 3/4/5 (0 なら hearts.pl の既定値である4人)")
 	games := flag.Int("games", 5, "大富豪・ナポレオン: 通して遊ぶゲーム数")
 	seed := flag.Int64("seed", 0, "乱数シード (0 なら毎回変わる)")

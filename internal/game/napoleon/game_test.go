@@ -2,6 +2,7 @@ package napoleon_test
 
 import (
 	"math/rand"
+	"strings"
 	"testing"
 
 	"hearts/internal/cards"
@@ -12,7 +13,16 @@ import (
 // autoPlay は「人間の席」も含めて全員をランダムに動かし、1 卓を最後まで進める。
 func autoPlay(t *testing.T, g *ngame.Game, engine *nrules.Engine, rng *rand.Rand) {
 	t.Helper()
+	autoPlayWith(t, g, rng, nil)
+}
+
+// autoPlayWith は autoPlay と同じだが、1 手進めるごとに check を呼ぶ。
+func autoPlayWith(t *testing.T, g *ngame.Game, rng *rand.Rand, check func()) {
+	t.Helper()
 	for step := 0; step < 5000; step++ {
+		if check != nil {
+			check()
+		}
 		switch g.Phase() {
 		case ngame.PhaseGameOver:
 			return
@@ -214,6 +224,51 @@ func TestNapoleonAndAideAreDecided(t *testing.T) {
 	}
 	if g.Trump() != g.Bid().Suit {
 		t.Errorf("切り札 %s が宣言 %s と一致していません", g.Trump(), g.Bid().Label())
+	}
+}
+
+// 副官の有無と正体は、指名カードが場に出るまで明かさない。
+// 副官なしのゲーム (指名カードが埋め札やナポレオンの手札にある) でも、
+// 冒頭で「副官なし」と分かってしまってはいけない。
+func TestAideStaysHiddenUntilCardIsPlayed(t *testing.T) {
+	engine, err := nrules.New("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	soloRounds := 0
+	for seed := int64(1); seed <= 40; seed++ {
+		rng := rand.New(rand.NewSource(seed))
+		g, err := ngame.New(engine, rng, 3, nrules.DefaultOptions())
+		if err != nil {
+			t.Fatal(err)
+		}
+		seen := map[nrules.Card]bool{}
+		countedSolo := false
+		autoPlayWith(t, g, rng, func() {
+			switch g.Phase() {
+			case ngame.PhaseBidding:
+				seen = map[nrules.Card]bool{}
+				countedSolo = false
+			case ngame.PhasePlaying, ngame.PhaseTrickDone:
+				for _, c := range g.Played() {
+					seen[c] = true
+				}
+				if g.Solo() && !countedSolo {
+					soloRounds++
+					countedSolo = true
+				}
+				if g.AideRevealed() && !seen[g.AideCard()] {
+					t.Fatalf("seed %d: 指名カード %s が出る前に副官が明かされています (副官なし=%v)",
+						seed, cards.Label(g.AideCard()), g.Solo())
+				}
+				if strings.Contains(g.Notice(), "副官なし") && !seen[g.AideCard()] {
+					t.Fatalf("seed %d: 指名カードが出る前に副官なしと知らされています: %s", seed, g.Notice())
+				}
+			}
+		})
+	}
+	if soloRounds == 0 {
+		t.Log("副官なしのゲームが一度も起きませんでした (シードを増やすと確かめられます)")
 	}
 }
 

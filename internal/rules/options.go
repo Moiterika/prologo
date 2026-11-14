@@ -3,22 +3,25 @@ package rules
 // options.go — ゲーム開始時に選ぶ流儀。
 //
 // 実際の判定は Prolog 側 (hearts_rules.pl の first_trick_points/1,
-// first_trick_lead/1) が持つ。ここはその設定と、画面に出す説明文だけ。
+// first_trick_lead/1, hearts_break_rule/1, scoring_rule/1) が持つ。ここはその設定と、画面に出す説明文だけ。
 
 // Options は選べる流儀。
 type Options struct {
 	FirstTrickPoints FirstTrickPoints
 	FirstTrickLead   FirstTrickLead
 	HeartsBreak      HeartsBreakRule
+	Scoring          ScoringRule
 }
 
 // DefaultOptions は既定の流儀。
-// 第1トリックの点数札は許可、ハートブレイク規則は使わない。
+// 第1トリックは ♣2 の持ち主が自由にリードし、点数札は許可、
+// ハートブレイク規則は使わない。スラムは本人 0 点、他全員が満点失点。
 func DefaultOptions() Options {
 	return Options{
 		FirstTrickPoints: AllowPoints,
-		FirstTrickLead:   LeadOpeningCard,
+		FirstTrickLead:   LeadFree,
 		HeartsBreak:      HeartsBreakOff,
+		Scoring:          ScoringSlamOthers,
 	}
 }
 
@@ -30,7 +33,10 @@ func (o Options) Apply(r *Engine) error {
 	if err := r.SetFirstTrickLead(o.FirstTrickLead); err != nil {
 		return err
 	}
-	return r.SetHeartsBreakRule(o.HeartsBreak)
+	if err := r.SetHeartsBreakRule(o.HeartsBreak); err != nil {
+		return err
+	}
+	return r.SetScoringRule(o.Scoring)
 }
 
 // UsesHeartsBreak はハートブレイク規則を使う設定か。
@@ -38,9 +44,15 @@ func (o Options) UsesHeartsBreak() bool {
 	return o.HeartsBreak == HeartsBreakOn
 }
 
+// UsesLife は持ち点から引いていく体力制か。
+// 体力制でも Game が持つのは累計失点で、持ち点は 開始点 - 累計失点 として表示する。
+func (o Options) UsesLife() bool {
+	return o.Scoring == ScoringLife
+}
+
 // ParseOptions はフォームの値を Options にする。
 // 知らない値は既定に落とす (画面から来る値なので厳密に弾く必要はない)。
-func ParseOptions(points, lead, heartsBreak string) Options {
+func ParseOptions(points, lead, heartsBreak, scoring string) Options {
 	o := DefaultOptions()
 	switch FirstTrickPoints(points) {
 	case ForbidAllPoints, ForbidHearts, AllowPoints:
@@ -53,6 +65,10 @@ func ParseOptions(points, lead, heartsBreak string) Options {
 	switch HeartsBreakRule(heartsBreak) {
 	case HeartsBreakOn, HeartsBreakOff:
 		o.HeartsBreak = HeartsBreakRule(heartsBreak)
+	}
+	switch ScoringRule(scoring) {
+	case ScoringSlamOthers, ScoringSlamZero, ScoringLife:
+		o.Scoring = ScoringRule(scoring)
 	}
 	return o
 }
@@ -85,65 +101,14 @@ func (o Options) HeartsBreakLabel() string {
 	return "ハートブレイクなし"
 }
 
-// =============================================
-// プリセット
-// =============================================
-
-// Preset は設定画面に出す、流儀の組み合わせ 1 つぶん。
-type Preset struct {
-	Name        string // フォームの値
-	Label       string
-	Description string
-}
-
-// プリセットの名前。大富豪・ナポレオンと揃えてある。
-const (
-	PresetBasic       = "basic"
-	PresetRecommended = "recommended"
-)
-
-// Presets は設定画面に並べるプリセット。
-func Presets() []Preset {
-	return []Preset{
-		{PresetBasic, "基本ルールのみ", "第1トリックは開始カードから。点数札の制限もハートブレイクもありません。hearts.pl そのままの形です。"},
-		{PresetRecommended, "作者オススメ", "第1トリックに点数札を出せず (no blood)、ハートブレイクあり。よく遊ばれている流儀です。"},
+// ScoringLabel は選んだ流儀の短い説明。
+func (o Options) ScoringLabel() string {
+	switch o.Scoring {
+	case ScoringLife:
+		return "体力制 (スラムで回復)"
+	case ScoringSlamZero:
+		return "スラムは 0 点扱い"
+	default:
+		return "スラムで他全員に失点"
 	}
-}
-
-// BasicOptions は追加の流儀を使わない設定。既定の流儀と同じ。
-func BasicOptions() Options {
-	return DefaultOptions()
-}
-
-// RecommendedOptions はよく遊ばれている流儀の組み合わせ。
-//
-// ハートは既定の流儀が「基本ルールのみ」と同じなので、大富豪・ナポレオンと
-// 違って、オススメは既定とは別の組み合わせにしてある。
-func RecommendedOptions() Options {
-	return Options{
-		FirstTrickPoints: ForbidAllPoints,
-		FirstTrickLead:   LeadOpeningCard,
-		HeartsBreak:      HeartsBreakOn,
-	}
-}
-
-// WithPreset は流儀をプリセットに置き換える。知らない名前なら元のまま返す。
-func (o Options) WithPreset(name string) Options {
-	switch name {
-	case PresetBasic:
-		return BasicOptions()
-	case PresetRecommended:
-		return RecommendedOptions()
-	}
-	return o
-}
-
-// PresetName は今の設定と一致するプリセットの名前を返す。無ければ空。
-func (o Options) PresetName() string {
-	for _, p := range Presets() {
-		if o.WithPreset(p.Name) == o {
-			return p.Name
-		}
-	}
-	return ""
 }

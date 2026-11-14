@@ -411,18 +411,35 @@ func TestSlam(t *testing.T) {
 	allPoints = append(allPoints, c("s", "q"))
 
 	taken := [][]Card{{c("c", "3")}, allPoints, {c("d", "5")}, nil}
-	final, slammer, err := r.RoundScores(taken)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if slammer != 1 {
-		t.Fatalf("slammer = %d; want 1", slammer)
-	}
-	want := []int{26, 0, 26, 26}
-	for i := range want {
-		if final[i] != want[i] {
-			t.Fatalf("final = %v; want %v", final, want)
+
+	// 得点の数え方ごとの精算。体力制の -26 は「持ち点が 26 回復」を表す。
+	for _, tc := range []struct {
+		mode ScoringRule
+		want []int
+	}{
+		{ScoringSlamOthers, []int{26, 0, 26, 26}},
+		{ScoringSlamZero, []int{0, 0, 0, 0}},
+		{ScoringLife, []int{0, -26, 0, 0}},
+	} {
+		if err := r.SetScoringRule(tc.mode); err != nil {
+			t.Fatal(err)
 		}
+		final, slammer, err := r.RoundScores(taken)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if slammer != 1 {
+			t.Fatalf("%s: slammer = %d; want 1", tc.mode, slammer)
+		}
+		for i := range tc.want {
+			if final[i] != tc.want[i] {
+				t.Fatalf("%s: final = %v; want %v", tc.mode, final, tc.want)
+			}
+		}
+	}
+
+	if err := r.SetScoringRule("bogus"); err == nil {
+		t.Fatal("知らない流儀を受け付けました")
 	}
 }
 
