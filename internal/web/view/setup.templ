@@ -9,7 +9,11 @@ templ SetupPage(vm SetupVM) {
 					第1トリック (1巡目) の扱いは流儀が分かれます。好みのものを選んでください。
 				</p>
 			</div>
-			<form method="post" action="/start" class="space-y-6">
+			if vm.Notice != "" {
+				<div class="bg-amber-900/60 border border-amber-500 rounded p-3 text-sm">{ vm.Notice }</div>
+			}
+			@presetPicker("/hearts/preset", vm.Presets, "押すと下の 3 つの流儀がまとめて切り替わります。")
+			<form method="post" action="/hearts/start" class="space-y-6 border-t border-emerald-800 pt-6">
 				<fieldset class="space-y-2">
 					<legend class="font-semibold mb-2">第1トリックのリード</legend>
 					for _, o := range vm.LeadOptions {

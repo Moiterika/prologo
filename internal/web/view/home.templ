@@ -1,0 +1,48 @@
+package view
+
+// homeGame はゲームを選ぶ画面の 1 枚。
+type homeGame struct {
+	Href    string
+	Label   string
+	Mark    string
+	Red     bool
+	Summary string
+	Playing bool
+}
+
+func homeGames(vm HomeVM) []homeGame {
+	return []homeGame{
+		{"/hearts", "ハート", "♥", true, "CPU 3 人と失点を押し付け合うトリックテイキング。♥ と ♠Q を取らないように立ち回ります。", vm.HeartsPlaying},
+		{"/daifugo", "大富豪", "♠", false, "場より強い手を出して、手札を先に出し切った人が勝ち。ローカルルールを選んで遊べます。", vm.DaifugoPlaying},
+		{"/napoleon", "ナポレオン", "♦", true, "競りでナポレオンを決め、ナポレオン軍と連合軍で絵札 20 枚を奪い合います。", vm.NapoleonPlaying},
+	}
+}
+
+templ HomePage(vm HomeVM) {
+	@Layout("トランプ", "") {
+		<section class="space-y-4">
+			<div>
+				<h2 class="text-xl font-bold">遊ぶゲームを選んでください</h2>
+				<p class="text-sm text-emerald-400 mt-1">どのゲームも CPU と対戦します。遊び始めてからでも、上のヘッダーで行き来できます。</p>
+			</div>
+			// ゲームを開くのはページ遷移なので、htmx の差し替え対象から外す。
+			<div class="grid gap-4 sm:grid-cols-3" hx-boost="false">
+				for _, g := range homeGames(vm) {
+					<a
+						href={ templ.SafeURL(g.Href) }
+						class="block rounded-lg border border-emerald-800 bg-emerald-900/40 p-4 hover:border-amber-400 hover:bg-emerald-900"
+					>
+						<div class="flex items-baseline gap-2">
+							<span class={ "text-2xl", templ.KV("text-rose-400", g.Red), templ.KV("text-emerald-50", !g.Red) }>{ g.Mark }</span>
+							<span class="text-lg font-bold">{ g.Label }</span>
+							if g.Playing {
+								<span class="text-xs text-amber-300 border border-amber-400 rounded px-1">対局中</span>
+							}
+						</div>
+						<p class="text-sm text-emerald-400 mt-2">{ g.Summary }</p>
+					</a>
+				}
+			</div>
+		</section>
+	}
+}

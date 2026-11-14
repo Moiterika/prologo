@@ -65,7 +65,7 @@ func run(addr string, cfg web.Config) error {
 	srv.Routes(mux)
 
 	log.Printf("ゲームを開始します: http://%s/", addr)
-	log.Printf("  ハート      http://%s/", addr)
+	log.Printf("  ハート      http://%s/hearts", addr)
 	log.Printf("  大富豪      http://%s/daifugo", addr)
 	log.Printf("  ナポレオン  http://%s/napoleon", addr)
 	return http.ListenAndServe(addr, mux)

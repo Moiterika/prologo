@@ -20,6 +20,8 @@ func (s *Server) routesNapoleon(mux *http.ServeMux) {
 	mux.HandleFunc("GET /napoleon/{$}", s.showNapoleon)
 	mux.HandleFunc("POST /napoleon/start", s.postNapoleonStart)
 	mux.HandleFunc("POST /napoleon/setup", s.postNapoleonSetup)
+	mux.HandleFunc("POST /napoleon/preset", s.postNapoleonPreset)
+	mux.HandleFunc("POST /napoleon/quit", s.quit(func(sess *session) { sess.nGame = nil }))
 	mux.HandleFunc("POST /napoleon/new", s.postNapoleonNew)
 	mux.HandleFunc("POST /napoleon/bid", s.handleNapoleon(func(r *http.Request, g *ngame.Game) error {
 		count, suit, pass, err := parseBid(r.FormValue("bid"))
@@ -53,7 +55,7 @@ func (s *Server) routesNapoleon(mux *http.ServeMux) {
 		return g.Next()
 	}))
 
-	for _, path := range []string{"start", "setup", "new", "bid", "aide", "discard", "play", "next"} {
+	for _, path := range []string{"start", "setup", "preset", "quit", "new", "bid", "aide", "discard", "play", "next"} {
 		mux.HandleFunc("GET /napoleon/"+path, func(w http.ResponseWriter, r *http.Request) {
 			http.Redirect(w, r, "/napoleon", http.StatusSeeOther)
 		})
@@ -132,6 +134,29 @@ func (s *Server) postNapoleonSetup(w http.ResponseWriter, r *http.Request) {
 	s.renderNapoleon(w, r, sess, "")
 }
 
+// postNapoleonPreset はルール選択の画面で、ローカルルールをプリセットの
+// 組み合わせに置き換える。ゲームはまだ始めず、選び直した画面を返す。
+// 人数は今の選択を残す。
+func (s *Server) postNapoleonPreset(w http.ResponseWriter, r *http.Request) {
+	sess, ok := s.lockedSession(w, r, s.napoleonSession)
+	if !ok {
+		return
+	}
+	defer sess.mu.Unlock()
+
+	var notice string
+	if sess.nGame == nil {
+		name := r.FormValue("preset")
+		sess.nOpts = sess.nOpts.WithPreset(name)
+		for _, p := range nrules.Presets() {
+			if p.Name == name {
+				notice = "「" + p.Label + "」の組み合わせにしました。このまま始めるか、ここから選び直してください。"
+			}
+		}
+	}
+	s.renderNapoleon(w, r, sess, notice)
+}
+
 func (s *Server) postNapoleonNew(w http.ResponseWriter, r *http.Request) {
 	sess, ok := s.lockedSession(w, r, s.napoleonSession)
 	if !ok {
@@ -175,7 +200,7 @@ func (s *Server) renderNapoleon(w http.ResponseWriter, r *http.Request, sess *se
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
 	if sess.nGame == nil {
-		vm := buildNapoleonSetupVM(sess.nOpts, s.games)
+		vm := buildNapoleonSetupVM(sess.nOpts, s.games, msg)
 		if err := view.NapoleonSetupPage(vm).Render(r.Context(), w); err != nil {
 			log.Printf("描画に失敗しました: %v", err)
 		}

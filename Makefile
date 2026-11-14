@@ -6,7 +6,7 @@ generate:
 	go tool templ generate
 
 build:
-	go build -o hearts.exe ./cmd/game
+	go build -o game.exe ./cmd/game
 
 vet:
 	go vet ./...
@@ -34,4 +34,4 @@ doc-http:
 	go run golang.org/x/tools/cmd/godoc@latest -http=127.0.0.1:6060
 
 clean:
-	rm -f hearts.exe
+	rm -f game.exe

@@ -14,7 +14,11 @@ templ NapoleonSetupPage(vm NapoleonSetupVM) {
 					始める前に決めておく類のものをここで選びます。
 				</p>
 			</div>
-			<form method="post" action="/napoleon/start" class="space-y-6">
+			if vm.Notice != "" {
+				<div class="bg-amber-900/60 border border-amber-500 rounded p-3 text-sm">{ vm.Notice }</div>
+			}
+			@presetPicker("/napoleon/preset", vm.Presets, "押すとローカルルールがまとめて切り替わります (人数はそのまま)。")
+			<form method="post" action="/napoleon/start" class="space-y-6 border-t border-emerald-800 pt-6">
 				for _, g := range vm.Groups {
 					@choiceGroup(g)
 				}
@@ -101,6 +105,11 @@ templ napoleonStatus(vm NapoleonTableVM) {
 		}
 		if vm.LeadSuit != "" {
 			<span>台札 <span class="font-bold">{ vm.LeadSuit }</span></span>
+		}
+		if vm.Phase != "game_over" {
+			<span class="ml-auto">
+				@quitButton("/napoleon/quit")
+			</span>
 		}
 	</section>
 	@ruleChips(vm.RuleLabels)

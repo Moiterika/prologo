@@ -437,3 +437,103 @@ func (o Options) Labels() []string {
 	}
 	return out
 }
+
+// =============================================
+// プリセット
+// =============================================
+
+// Preset は設定画面に出す、ローカルルールの組み合わせ 1 つぶん。
+type Preset struct {
+	Name        string // フォームの値
+	Label       string
+	Description string
+}
+
+// プリセットの名前。
+const (
+	PresetBasic       = "basic"
+	PresetRecommended = "recommended"
+)
+
+// Presets は設定画面に並べるプリセット。
+func Presets() []Preset {
+	return []Preset{
+		{PresetBasic, "基本ルールのみ", "ローカルルールをすべて外します。説明書の基本ルールだけで遊べます。"},
+		{PresetRecommended, "作者オススメ", "8流し・Jバック・縛り・10捨てなどを盛った、賑やかな卓です。"},
+	}
+}
+
+// BasicOptions はローカルルールをすべて外した設定。
+// ジョーカー 2 枚と「♦3 を持つ人が自由に出す」は基本ルールの側に含める。
+func BasicOptions() Options {
+	return Options{
+		Players:       4,
+		Jokers:        2,
+		EightCut:      "off",
+		JackBack:      "off",
+		JackBackMode:  "forced",
+		SeqRevolution: "off",
+		FiveCard:      "off",
+		Bind:          "off",
+		BindStrict:    "off",
+		BindPartial:   "off",
+		TenDiscard:    "off",
+		SevenGive:     "off",
+		SpadeThree:    "off",
+		PassLock:      "off",
+		FinishFlush:   "off",
+		FoulFinish:    "off",
+		MiyakoOchi:    "off",
+		FirstPlay:     "diamond3_free",
+	}
+}
+
+// presetOptions は名前からプリセットの設定を引く。
+func presetOptions(name string) (Options, bool) {
+	switch name {
+	case PresetBasic:
+		return BasicOptions(), true
+	case PresetRecommended:
+		return DefaultOptions(), true
+	}
+	return Options{}, false
+}
+
+// WithPreset はローカルルールをプリセットに置き換える。
+// 人数はローカルルールではないので、今の値を残す。
+// 知らない名前なら元のまま返す。
+func (o Options) WithPreset(name string) Options {
+	p, ok := presetOptions(name)
+	if !ok {
+		return o
+	}
+	p.Players = o.Players
+	return p
+}
+
+// PresetName は今の設定と一致するプリセットの名前を返す。無ければ空。
+// 人数と、親の流儀を使わないときの枝分かれは比べない。
+func (o Options) PresetName() string {
+	for _, p := range Presets() {
+		want, _ := presetOptions(p.Name)
+		want.Players = o.Players
+		if want.normalized() == o.normalized() {
+			return p.Name
+		}
+	}
+	return ""
+}
+
+// normalized は使っていない流儀の枝分かれを既定に揃える。
+// Jバックなしのときの「任意適用」のように、効かない値の違いで
+// 「別の設定」と見なさないため。
+func (o Options) normalized() Options {
+	if o.JackBack == "off" {
+		o.JackBackMode = "forced"
+	}
+	if o.Bind == "off" {
+		o.BindStrict = "off"
+		o.BindPartial = "off"
+	}
+	return o
+}

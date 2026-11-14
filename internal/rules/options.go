@@ -84,3 +84,66 @@ func (o Options) HeartsBreakLabel() string {
 	}
 	return "ハートブレイクなし"
 }
+
+// =============================================
+// プリセット
+// =============================================
+
+// Preset は設定画面に出す、流儀の組み合わせ 1 つぶん。
+type Preset struct {
+	Name        string // フォームの値
+	Label       string
+	Description string
+}
+
+// プリセットの名前。大富豪・ナポレオンと揃えてある。
+const (
+	PresetBasic       = "basic"
+	PresetRecommended = "recommended"
+)
+
+// Presets は設定画面に並べるプリセット。
+func Presets() []Preset {
+	return []Preset{
+		{PresetBasic, "基本ルールのみ", "第1トリックは開始カードから。点数札の制限もハートブレイクもありません。hearts.pl そのままの形です。"},
+		{PresetRecommended, "作者オススメ", "第1トリックに点数札を出せず (no blood)、ハートブレイクあり。よく遊ばれている流儀です。"},
+	}
+}
+
+// BasicOptions は追加の流儀を使わない設定。既定の流儀と同じ。
+func BasicOptions() Options {
+	return DefaultOptions()
+}
+
+// RecommendedOptions はよく遊ばれている流儀の組み合わせ。
+//
+// ハートは既定の流儀が「基本ルールのみ」と同じなので、大富豪・ナポレオンと
+// 違って、オススメは既定とは別の組み合わせにしてある。
+func RecommendedOptions() Options {
+	return Options{
+		FirstTrickPoints: ForbidAllPoints,
+		FirstTrickLead:   LeadOpeningCard,
+		HeartsBreak:      HeartsBreakOn,
+	}
+}
+
+// WithPreset は流儀をプリセットに置き換える。知らない名前なら元のまま返す。
+func (o Options) WithPreset(name string) Options {
+	switch name {
+	case PresetBasic:
+		return BasicOptions()
+	case PresetRecommended:
+		return RecommendedOptions()
+	}
+	return o
+}
+
+// PresetName は今の設定と一致するプリセットの名前を返す。無ければ空。
+func (o Options) PresetName() string {
+	for _, p := range Presets() {
+		if o.WithPreset(p.Name) == o {
+			return p.Name
+		}
+	}
+	return ""
+}

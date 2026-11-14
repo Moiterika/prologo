@@ -20,6 +20,8 @@ type OptionVM struct {
 
 // SetupVM はゲーム開始前のルール選択画面。
 type SetupVM struct {
+	Presets            []PresetVM
+	Notice             string // プリセットを反映したときの案内
 	PointsOptions      []OptionVM
 	LeadOptions        []OptionVM
 	HeartsBreakOptions []OptionVM
@@ -139,4 +141,11 @@ func signed(n int) string {
 		return "+" + strconv.Itoa(n)
 	}
 	return strconv.Itoa(n)
+}
+
+// HomeVM はゲームを選ぶ画面。対局の途中のゲームには印を付ける。
+type HomeVM struct {
+	HeartsPlaying   bool
+	DaifugoPlaying  bool
+	NapoleonPlaying bool
 }

@@ -368,3 +368,91 @@ func (o Options) Labels() []string {
 	}
 	return out
 }
+
+// =============================================
+// プリセット
+// =============================================
+
+// Preset は設定画面に出す、ローカルルールの組み合わせ 1 つぶん。
+type Preset struct {
+	Name        string // フォームの値
+	Label       string
+	Description string
+}
+
+// プリセットの名前。
+const (
+	PresetBasic       = "basic"
+	PresetRecommended = "recommended"
+)
+
+// Presets は設定画面に並べるプリセット。
+func Presets() []Preset {
+	return []Preset{
+		{PresetBasic, "基本ルールのみ", "ローカルルールをすべて外します。説明書の基本ルールだけで遊べます。"},
+		{PresetRecommended, "作者オススメ", "ジョーカー・セイムツー・よろめき・三役の拒否権を入れた形です。"},
+	}
+}
+
+// BasicOptions はローカルルールをすべて外した設定 (52 枚、特殊な勝ち方なし)。
+func BasicOptions() Options {
+	return Options{
+		Players:      5,
+		MinBid:       10,
+		SameTwo:      "off",
+		Yoromeki:     "off",
+		JokerRule:    "none",
+		JokerFree:    "off",
+		JokerLead:    "none",
+		JokerDemand:  "off",
+		MightyExempt: "off",
+		Scoring:      "twelfth",
+		Slam:         "normal",
+	}
+}
+
+// presetOptions は名前からプリセットの設定を引く。
+func presetOptions(name string) (Options, bool) {
+	switch name {
+	case PresetBasic:
+		return BasicOptions(), true
+	case PresetRecommended:
+		return DefaultOptions(), true
+	}
+	return Options{}, false
+}
+
+// WithPreset はローカルルールをプリセットに置き換える。
+// 人数はローカルルールではないので、今の値を残す。
+// 知らない名前なら元のまま返す。
+func (o Options) WithPreset(name string) Options {
+	p, ok := presetOptions(name)
+	if !ok {
+		return o
+	}
+	p.Players = o.Players
+	return p
+}
+
+// PresetName は今の設定と一致するプリセットの名前を返す。無ければ空。
+// 人数と、ジョーカーを入れないときの枝分かれは比べない。
+func (o Options) PresetName() string {
+	for _, p := range Presets() {
+		want, _ := presetOptions(p.Name)
+		want.Players = o.Players
+		if want.normalized() == o.normalized() {
+			return p.Name
+		}
+	}
+	return ""
+}
+
+// normalized は使っていない流儀の枝分かれを既定に揃える。
+func (o Options) normalized() Options {
+	if o.JokerRule == "none" {
+		o.JokerFree = "off"
+		o.JokerLead = "none"
+		o.JokerDemand = "off"
+	}
+	return o
+}

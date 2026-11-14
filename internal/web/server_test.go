@@ -71,7 +71,7 @@ func playableNumbers(html string) []string {
 // startGame は最初のルール選択を済ませてゲームを開始する。
 func startGame(t *testing.T, c *http.Client, base string, points, lead, heartsBreak string) string {
 	t.Helper()
-	return post(t, c, base+"/start", url.Values{
+	return post(t, c, base+"/hearts/start", url.Values{
 		"points":       {points},
 		"lead":         {lead},
 		"hearts_break": {heartsBreak},
@@ -88,7 +88,7 @@ func startDefaultGame(t *testing.T, c *http.Client, base string) string {
 func TestServerShowsSetupFirst(t *testing.T) {
 	srv, c := newTestServer(t)
 
-	body := get(t, c, srv.URL+"/")
+	body := get(t, c, srv.URL+"/hearts")
 	for _, want := range []string{
 		"ルールを選んでください",
 		`value="forbid_all"`,
@@ -146,7 +146,7 @@ func inOrder(t *testing.T, body string, parts ...string) {
 func TestServerRendersTable(t *testing.T) {
 	srv, c := newTestServer(t)
 
-	get(t, c, srv.URL+"/")
+	get(t, c, srv.URL+"/hearts")
 	body := startDefaultGame(t, c, srv.URL)
 
 	// タイトルは部分一致だと「ハートブレイク」等にも当たるので要素ごと見る
@@ -160,12 +160,12 @@ func TestServerRendersTable(t *testing.T) {
 func TestServerPlaysThroughATrick(t *testing.T) {
 	srv, c := newTestServer(t)
 
-	get(t, c, srv.URL+"/")
+	get(t, c, srv.URL+"/hearts")
 	body := startDefaultGame(t, c, srv.URL)
 
 	// 交換の局面なら 3 枚渡す
 	if strings.Contains(body, "渡すカードを") {
-		body = post(t, c, srv.URL+"/pass", url.Values{"card": {"1", "2", "3"}})
+		body = post(t, c, srv.URL+"/hearts/pass", url.Values{"card": {"1", "2", "3"}})
 	}
 
 	// 人間の手番が来るまで進め、押せるカードを 1 枚出す
@@ -176,14 +176,14 @@ func TestServerPlaysThroughATrick(t *testing.T) {
 	if len(nums) == 0 {
 		t.Fatal("押せるカードが 1 枚もありません")
 	}
-	body = post(t, c, srv.URL+"/play", url.Values{"card": {nums[0]}})
+	body = post(t, c, srv.URL+"/hearts/play", url.Values{"card": {nums[0]}})
 
 	if !strings.Contains(body, "が取りました") {
 		t.Fatalf("トリックが解決していません:\n%s", firstLines(body, 40))
 	}
 
 	// 次のトリックへ
-	body = post(t, c, srv.URL+"/next", nil)
+	body = post(t, c, srv.URL+"/hearts/next", nil)
 	if !strings.Contains(body, "第 2 / 13 トリック") && !strings.Contains(body, "ラウンド結果") {
 		t.Fatalf("次のトリックに進んでいません:\n%s", firstLines(body, 40))
 	}
@@ -191,11 +191,11 @@ func TestServerPlaysThroughATrick(t *testing.T) {
 
 func TestServerShowsInputError(t *testing.T) {
 	srv, c := newTestServer(t)
-	get(t, c, srv.URL+"/")
+	get(t, c, srv.URL+"/hearts")
 	startDefaultGame(t, c, srv.URL)
 
 	// 交換の局面で 1 枚しか選ばずに送る
-	body := post(t, c, srv.URL+"/pass", url.Values{"card": {"1"}})
+	body := post(t, c, srv.URL+"/hearts/pass", url.Values{"card": {"1"}})
 	if !strings.Contains(body, "枚選んでください") {
 		t.Fatalf("入力ミスの指摘が出ていません:\n%s", firstLines(body, 40))
 	}
@@ -206,7 +206,7 @@ func TestServerShowsInputError(t *testing.T) {
 // 選んだ流儀が盤面に反映される。
 func TestServerAppliesChosenRules(t *testing.T) {
 	srv, c := newTestServer(t)
-	get(t, c, srv.URL+"/")
+	get(t, c, srv.URL+"/hearts")
 
 	body := startGame(t, c, srv.URL, "allow", "free", "on")
 	for _, want := range []string{
@@ -221,7 +221,7 @@ func TestServerAppliesChosenRules(t *testing.T) {
 	}
 
 	// 選び直すとルール選択に戻り、前回の選択が残っている
-	body = post(t, c, srv.URL+"/setup", nil)
+	body = post(t, c, srv.URL+"/hearts/setup", nil)
 	if !strings.Contains(body, "ルールを選んでください") {
 		t.Fatalf("ルール選択に戻っていません:\n%s", firstLines(body, 40))
 	}
@@ -239,7 +239,7 @@ func TestServerAppliesChosenRules(t *testing.T) {
 // ハートブレイク規則を使わない設定 (既定) では、状態表示も知らせも出さない。
 func TestServerHidesHeartsBreakWhenOff(t *testing.T) {
 	srv, c := newTestServer(t)
-	get(t, c, srv.URL+"/")
+	get(t, c, srv.URL+"/hearts")
 
 	body := startDefaultGame(t, c, srv.URL)
 	if !strings.Contains(body, "ハートブレイクなし") {
@@ -258,13 +258,13 @@ func TestSessionsAreIndependent(t *testing.T) {
 	jar, _ := cookiejar.New(nil)
 	c2 := &http.Client{Jar: jar}
 
-	get(t, c1, srv.URL+"/")
-	get(t, c2, srv.URL+"/")
+	get(t, c1, srv.URL+"/hearts")
+	get(t, c2, srv.URL+"/hearts")
 
 	// c1 だけゲームを開始する
 	startDefaultGame(t, c1, srv.URL)
 
-	body2 := get(t, c2, srv.URL+"/")
+	body2 := get(t, c2, srv.URL+"/hearts")
 	if !strings.Contains(body2, "ルールを選んでください") {
 		t.Fatal("別セッションのゲームが巻き込まれています")
 	}
@@ -272,11 +272,11 @@ func TestSessionsAreIndependent(t *testing.T) {
 
 func TestNewGameResets(t *testing.T) {
 	srv, c := newTestServer(t)
-	get(t, c, srv.URL+"/")
+	get(t, c, srv.URL+"/hearts")
 	startDefaultGame(t, c, srv.URL)
-	post(t, c, srv.URL+"/pass", url.Values{"card": {"1", "2", "3"}})
+	post(t, c, srv.URL+"/hearts/pass", url.Values{"card": {"1", "2", "3"}})
 
-	body := post(t, c, srv.URL+"/new", nil)
+	body := post(t, c, srv.URL+"/hearts/new", nil)
 	if !strings.Contains(body, "第 1 ラウンド") {
 		t.Fatalf("やり直しで第1ラウンドに戻っていません:\n%s", firstLines(body, 40))
 	}

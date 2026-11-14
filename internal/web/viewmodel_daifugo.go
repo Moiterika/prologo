@@ -10,10 +10,22 @@ import (
 )
 
 // buildDaifugoSetupVM はゲーム開始前のルール選択画面を組み立てる。
-func buildDaifugoSetupVM(opts drules.Options, totalGames int) view.DaifugoSetupVM {
+func buildDaifugoSetupVM(opts drules.Options, totalGames int, notice string) view.DaifugoSetupVM {
+	active := opts.PresetName()
+	var presets []view.PresetVM
+	for _, p := range drules.Presets() {
+		presets = append(presets, view.PresetVM{
+			Name:        p.Name,
+			Label:       p.Label,
+			Description: p.Description,
+			Active:      p.Name == active,
+		})
+	}
 	return view.DaifugoSetupVM{
+		Presets:    presets,
 		Groups:     choiceGroups(opts.Groups()),
 		TotalGames: totalGames,
+		Notice:     notice,
 	}
 }
 

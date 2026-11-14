@@ -7,8 +7,8 @@ package web
 // 状態はプロセス内のメモリに、Cookie のセッション ID で紐付けて持つ。
 //
 // 3 つのゲーム (ハート / 大富豪 / ナポレオン) を 1 つのサーバーで出す。
-// ハートは "/"、他は "/daifugo" と "/napoleon" の下。
-// それぞれのハンドラは server_daifugo.go / server_napoleon.go にある。
+// "/" はゲームを選ぶ画面で、各ゲームは "/hearts" "/daifugo" "/napoleon" の下。
+// ハートのハンドラはこのファイル、他は server_daifugo.go / server_napoleon.go にある。
 
 import (
 	crand "crypto/rand"
@@ -30,7 +30,7 @@ import (
 	"hearts/internal/web/view"
 )
 
-const sessionCookie = "hearts_session"
+const sessionCookie = "cards_session"
 
 // session は 1 ブラウザ分の対局。
 //
@@ -100,25 +100,68 @@ func NewServer(cfg Config) *Server {
 }
 
 func (s *Server) Routes(mux *http.ServeMux) {
-	mux.HandleFunc("GET /{$}", s.showCurrent)
-	mux.HandleFunc("POST /start", s.postStart)
-	mux.HandleFunc("POST /pass", s.postPass)
-	mux.HandleFunc("POST /play", s.postPlay)
-	mux.HandleFunc("POST /next", s.postNext)
-	mux.HandleFunc("POST /new", s.postNew)
-	mux.HandleFunc("POST /setup", s.postSetup)
+	mux.HandleFunc("GET /{$}", s.showHome)
+	s.routesHearts(mux)
+	s.routesDaifugo(mux)
+	s.routesNapoleon(mux)
+}
+
+func (s *Server) routesHearts(mux *http.ServeMux) {
+	mux.HandleFunc("GET /hearts", s.showCurrent)
+	mux.HandleFunc("GET /hearts/{$}", s.showCurrent)
+	mux.HandleFunc("POST /hearts/start", s.postStart)
+	mux.HandleFunc("POST /hearts/pass", s.postPass)
+	mux.HandleFunc("POST /hearts/play", s.postPlay)
+	mux.HandleFunc("POST /hearts/next", s.postNext)
+	mux.HandleFunc("POST /hearts/new", s.postNew)
+	mux.HandleFunc("POST /hearts/setup", s.postSetup)
+	mux.HandleFunc("POST /hearts/preset", s.postPreset)
+	mux.HandleFunc("POST /hearts/quit", s.quit(func(sess *session) { sess.game = nil }))
 
 	// JavaScript を切った状態で操作したあとリロードすると、ブラウザは
 	// POST 先を GET しに来る。ゲームの状態はサーバーが持っているので、
 	// 今の画面へ戻すだけでよい。
-	for _, path := range []string{"/start", "/pass", "/play", "/next", "/new", "/setup"} {
-		mux.HandleFunc("GET "+path, func(w http.ResponseWriter, r *http.Request) {
-			http.Redirect(w, r, "/", http.StatusSeeOther)
+	for _, path := range []string{"start", "pass", "play", "next", "new", "setup", "preset", "quit"} {
+		mux.HandleFunc("GET /hearts/"+path, func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, "/hearts", http.StatusSeeOther)
 		})
 	}
+}
 
-	s.routesDaifugo(mux)
-	s.routesNapoleon(mux)
+// =============================================
+// ゲームを選ぶ画面
+// =============================================
+
+// showHome は遊べるゲームを並べる。対局中のゲームにはその旨を添える。
+func (s *Server) showHome(w http.ResponseWriter, r *http.Request) {
+	sess := s.session(w, r)
+	sess.mu.Lock()
+	vm := view.HomeVM{
+		HeartsPlaying:   sess.game != nil,
+		DaifugoPlaying:  sess.dGame != nil,
+		NapoleonPlaying: sess.nGame != nil,
+	}
+	sess.mu.Unlock()
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := view.HomePage(vm).Render(r.Context(), w); err != nil {
+		log.Printf("描画に失敗しました: %v", err)
+	}
+}
+
+// quit はプレイ中のゲームを打ち切り、ゲームを選ぶ画面へ戻す。
+//
+// 画面の一部ではなくページごと移る (ヘッダーの「いま遊んでいるゲーム」の
+// 印も変わるため)。ボタン側は htmx を通さない普通のフォームにしてあり、
+// ここでは "/" へリダイレクトするだけ。アドレス欄も "/" になる。
+func (s *Server) quit(clear func(*session)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		sess := s.session(w, r)
+		sess.mu.Lock()
+		clear(sess)
+		sess.mu.Unlock()
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+	}
 }
 
 // =============================================
@@ -260,6 +303,28 @@ func (s *Server) postSetup(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, sess, "")
 }
 
+// postPreset はルール選択の画面で、流儀をプリセットの組み合わせに
+// 置き換える。ゲームはまだ始めず、選び直した画面を返す。
+func (s *Server) postPreset(w http.ResponseWriter, r *http.Request) {
+	sess, ok := s.lockedSession(w, r, s.heartsSession)
+	if !ok {
+		return
+	}
+	defer sess.mu.Unlock()
+
+	var notice string
+	if sess.game == nil {
+		name := r.FormValue("preset")
+		sess.opts = sess.opts.WithPreset(name)
+		for _, p := range rules.Presets() {
+			if p.Name == name {
+				notice = "「" + p.Label + "」の組み合わせにしました。このまま始めるか、ここから選び直してください。"
+			}
+		}
+	}
+	s.render(w, r, sess, notice)
+}
+
 func (s *Server) postPass(w http.ResponseWriter, r *http.Request) {
 	s.handle(w, r, func(g *game.Game) error {
 		nums, err := formInts(r, "card")
@@ -329,7 +394,7 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, sess *session, m
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
 	if sess.game == nil {
-		vm, err := buildSetupVM(sess.engine, sess.opts, s.limit)
+		vm, err := buildSetupVM(sess.engine, sess.opts, s.limit, msg)
 		if err != nil {
 			s.fail(w, err)
 			return

@@ -10,10 +10,10 @@ type NavItem struct {
 }
 
 // navItems は遊べるゲームの一覧。active には "hearts" / "daifugo" /
-// "napoleon" のいずれかを渡す。
+// "napoleon" のいずれかを渡す。ゲームを選ぶ画面では "" を渡す。
 func navItems(active string) []NavItem {
 	items := []NavItem{
-		{Href: "/", Label: "ハート", Mark: "♥", Red: true},
+		{Href: "/hearts", Label: "ハート", Mark: "♥", Red: true},
 		{Href: "/daifugo", Label: "大富豪", Mark: "♠"},
 		{Href: "/napoleon", Label: "ナポレオン", Mark: "♦", Red: true},
 	}
@@ -51,8 +51,10 @@ templ Layout(title string, active string) {
 			hx-push-url="false"
 		>
 			<header class="border-b border-emerald-800 px-4 py-2 flex flex-wrap items-center gap-x-4 gap-y-1">
-				<h1 class="font-bold text-lg">トランプ</h1>
 				// ゲームの切り替えはページ遷移なので、htmx の差し替え対象から外す。
+				<h1 class="font-bold text-lg" hx-boost="false">
+					<a href="/" class="hover:text-amber-300">トランプ</a>
+				</h1>
 				<nav class="flex flex-wrap gap-2 text-sm" hx-boost="false">
 					for _, item := range navItems(active) {
 						<a
@@ -163,4 +165,61 @@ templ checkbox(t ToggleVM) {
 			<span class="text-sm text-emerald-400">{ t.Description }</span>
 		</span>
 	</label>
+}
+
+// presetPicker はルール選択画面の先頭に置くプリセットのボタン。
+//
+// ルールの本体フォームとは別のフォームにする。同じフォームに置くと、
+// ラジオボタンの上で Enter を押したときに先頭のプリセットが押された
+// ことになってしまう (暗黙の送信は最初の submit ボタンを使うため)。
+// note はボタンの上に出す一言 (何が切り替わるか)。
+templ presetPicker(action string, presets []PresetVM, note string) {
+	<div class="space-y-2">
+		<h3 class="font-semibold">プリセット</h3>
+		<p class="text-xs text-emerald-500">
+			{ note }切り替えたあと、個別に選び直すこともできます。
+		</p>
+		<div class="grid gap-3 sm:grid-cols-2">
+			for _, p := range presets {
+				<form method="post" action={ templ.SafeURL(action) }>
+					<input type="hidden" name="preset" value={ p.Name }/>
+					<button
+						type="submit"
+						class={ "w-full text-left rounded-lg border p-3",
+							templ.KV("border-amber-400 bg-emerald-900", p.Active),
+							templ.KV("border-emerald-800 bg-emerald-950/40 hover:border-emerald-600", !p.Active) }
+					>
+						<span class="font-semibold block">
+							{ p.Label }
+							if p.Active {
+								<span class="text-xs text-amber-300 ml-1">選択中</span>
+							}
+						</span>
+						<span class="text-sm text-emerald-400">{ p.Description }</span>
+					</button>
+				</form>
+			}
+		</div>
+	</div>
+}
+
+// quitButton はプレイ中にゲームを打ち切って、ゲームを選ぶ画面へ戻るボタン。
+//
+// ヘッダーの印も変わるのでページごと移る。htmx の差し替えは使わない
+// (hx-boost="false")。そのため確認も hx-confirm ではなく素の confirm で出す。
+// 誤って押すと得点が消えるので、JavaScript が使えるときは確認を挟む。
+templ quitButton(action string) {
+	<form
+		method="post"
+		action={ templ.SafeURL(action) }
+		hx-boost="false"
+		onsubmit="return confirm('ゲームを終了して、ゲームを選ぶ画面に戻りますか？ ここまでの得点は消えます。')"
+	>
+		<button
+			type="submit"
+			class="text-xs border border-emerald-700 hover:border-rose-400 hover:text-rose-300 rounded px-2 py-0.5"
+		>
+			終了してゲーム選択へ
+		</button>
+	</form>
 }

@@ -12,7 +12,7 @@ import (
 )
 
 // buildNapoleonSetupVM はゲーム開始前のルール選択画面を組み立てる。
-func buildNapoleonSetupVM(opts nrules.Options, totalGames int) view.NapoleonSetupVM {
+func buildNapoleonSetupVM(opts nrules.Options, totalGames int, notice string) view.NapoleonSetupVM {
 	groups := make([]view.GroupVM, 0)
 	for _, g := range opts.Groups() {
 		vm := view.GroupVM{
@@ -40,7 +40,17 @@ func buildNapoleonSetupVM(opts nrules.Options, totalGames int) view.NapoleonSetu
 		}
 		groups = append(groups, vm)
 	}
-	return view.NapoleonSetupVM{Groups: groups, TotalGames: totalGames}
+	active := opts.PresetName()
+	var presets []view.PresetVM
+	for _, p := range nrules.Presets() {
+		presets = append(presets, view.PresetVM{
+			Name:        p.Name,
+			Label:       p.Label,
+			Description: p.Description,
+			Active:      p.Name == active,
+		})
+	}
+	return view.NapoleonSetupVM{Presets: presets, Groups: groups, TotalGames: totalGames, Notice: notice}
 }
 
 func buildNapoleonTableVM(g *ngame.Game, errMsg string) (view.NapoleonTableVM, error) {

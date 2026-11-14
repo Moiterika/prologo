@@ -51,7 +51,8 @@ func aideValues(html string) []string {
 func TestNavLinksAllThreeGames(t *testing.T) {
 	srv, c := newTestServer(t)
 	for path, want := range map[string]string{
-		"/":         "ハート",
+		"/":         "遊ぶゲームを選んでください",
+		"/hearts":   "ハート",
 		"/daifugo":  "大富豪",
 		"/napoleon": "ナポレオン",
 	} {
@@ -59,7 +60,7 @@ func TestNavLinksAllThreeGames(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("GET %s に %q がありません", path, want)
 		}
-		for _, href := range []string{`href="/"`, `href="/daifugo"`, `href="/napoleon"`} {
+		for _, href := range []string{`href="/"`, `href="/hearts"`, `href="/daifugo"`, `href="/napoleon"`} {
 			if !strings.Contains(body, href) {
 				t.Errorf("GET %s のヘッダーに %s がありません", path, href)
 			}

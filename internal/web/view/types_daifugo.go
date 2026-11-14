@@ -36,10 +36,21 @@ type GroupVM struct {
 	TogglesHidden bool
 }
 
+// PresetVM はルール選択画面のプリセット 1 つ。
+// 押すと、ローカルルールの選択がまとめてその組み合わせに置き換わる。
+type PresetVM struct {
+	Name        string
+	Label       string
+	Description string
+	Active      bool // 今の選択がこのプリセットと一致しているか
+}
+
 // DaifugoSetupVM は大富豪のルール選択画面。
 type DaifugoSetupVM struct {
+	Presets    []PresetVM
 	Groups     []GroupVM
 	TotalGames int
+	Notice     string // プリセットを反映したときの案内
 }
 
 // DaifugoSeatVM は大富豪の 1 プレイヤー。

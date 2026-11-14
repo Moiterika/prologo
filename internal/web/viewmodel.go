@@ -20,7 +20,7 @@ var passDirJa = map[string]string{
 }
 
 // buildSetupVM はゲーム開始前のルール選択画面を組み立てる。
-func buildSetupVM(engine *rules.Engine, current rules.Options, limit int) (view.SetupVM, error) {
+func buildSetupVM(engine *rules.Engine, current rules.Options, limit int, notice string) (view.SetupVM, error) {
 	maxPoints, err := engine.TotalRoundPoints()
 	if err != nil {
 		return view.SetupVM{}, err
@@ -85,7 +85,20 @@ func buildSetupVM(engine *rules.Engine, current rules.Options, limit int) (view.
 		heartsBreak[i].Checked = heartsBreak[i].Value == string(current.HeartsBreak)
 	}
 
+	active := current.PresetName()
+	var presets []view.PresetVM
+	for _, p := range rules.Presets() {
+		presets = append(presets, view.PresetVM{
+			Name:        p.Name,
+			Label:       p.Label,
+			Description: p.Description,
+			Active:      p.Name == active,
+		})
+	}
+
 	return view.SetupVM{
+		Presets:            presets,
+		Notice:             notice,
 		PointsOptions:      points,
 		LeadOptions:        lead,
 		HeartsBreakOptions: heartsBreak,

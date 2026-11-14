@@ -4,8 +4,10 @@ package view
 
 // NapoleonSetupVM はナポレオンのルール選択画面。
 type NapoleonSetupVM struct {
+	Presets    []PresetVM
 	Groups     []GroupVM
 	TotalGames int
+	Notice     string // プリセットを反映したときの案内
 }
 
 // BidVM は選べるナポレオン宣言 1 つ。

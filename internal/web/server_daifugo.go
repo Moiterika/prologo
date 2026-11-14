@@ -21,6 +21,8 @@ func (s *Server) routesDaifugo(mux *http.ServeMux) {
 	mux.HandleFunc("GET /daifugo/{$}", s.showDaifugo)
 	mux.HandleFunc("POST /daifugo/start", s.postDaifugoStart)
 	mux.HandleFunc("POST /daifugo/setup", s.postDaifugoSetup)
+	mux.HandleFunc("POST /daifugo/preset", s.postDaifugoPreset)
+	mux.HandleFunc("POST /daifugo/quit", s.quit(func(sess *session) { sess.dGame = nil }))
 	mux.HandleFunc("POST /daifugo/new", s.postDaifugoNew)
 	mux.HandleFunc("POST /daifugo/play", s.handleDaifugo(func(r *http.Request, g *dgame.Game) error {
 		nums, err := formInts(r, "card")
@@ -63,7 +65,7 @@ func (s *Server) routesDaifugo(mux *http.ServeMux) {
 	// JavaScript を切った状態で操作したあとリロードすると、ブラウザは
 	// POST 先を GET しに来る。今の画面へ戻すだけでよい。
 	for _, path := range []string{
-		"start", "setup", "new", "play", "pass", "exchange", "next",
+		"start", "setup", "preset", "quit", "new", "play", "pass", "exchange", "next",
 		"jackback", "ten-discard", "seven-give",
 	} {
 		mux.HandleFunc("GET /daifugo/"+path, func(w http.ResponseWriter, r *http.Request) {
@@ -137,6 +139,29 @@ func (s *Server) postDaifugoSetup(w http.ResponseWriter, r *http.Request) {
 	s.renderDaifugo(w, r, sess, "")
 }
 
+// postDaifugoPreset はルール選択の画面で、ローカルルールをプリセットの
+// 組み合わせに置き換える。ゲームはまだ始めず、選び直した画面を返す。
+// 人数は今の選択を残す。
+func (s *Server) postDaifugoPreset(w http.ResponseWriter, r *http.Request) {
+	sess, ok := s.lockedSession(w, r, s.daifugoSession)
+	if !ok {
+		return
+	}
+	defer sess.mu.Unlock()
+
+	var notice string
+	if sess.dGame == nil {
+		name := r.FormValue("preset")
+		sess.dOpts = sess.dOpts.WithPreset(name)
+		for _, p := range drules.Presets() {
+			if p.Name == name {
+				notice = "「" + p.Label + "」の組み合わせにしました。このまま始めるか、ここから選び直してください。"
+			}
+		}
+	}
+	s.renderDaifugo(w, r, sess, notice)
+}
+
 func (s *Server) postDaifugoNew(w http.ResponseWriter, r *http.Request) {
 	sess, ok := s.lockedSession(w, r, s.daifugoSession)
 	if !ok {
@@ -181,7 +206,7 @@ func (s *Server) renderDaifugo(w http.ResponseWriter, r *http.Request, sess *ses
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
 	if sess.dGame == nil {
-		vm := buildDaifugoSetupVM(sess.dOpts, s.games)
+		vm := buildDaifugoSetupVM(sess.dOpts, s.games, msg)
 		if err := view.DaifugoSetupPage(vm).Render(r.Context(), w); err != nil {
 			log.Printf("描画に失敗しました: %v", err)
 		}

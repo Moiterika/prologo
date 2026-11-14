@@ -50,6 +50,9 @@ templ statusBar(vm TableVM) {
 			}
 		}
 		<span class="ml-auto text-emerald-500">{ itoa(vm.Limit) } 点で終了</span>
+		if vm.Phase != "game_over" {
+			@quitButton("/hearts/quit")
+		}
 	</section>
 	<section class="flex flex-wrap gap-2 text-xs text-emerald-500">
 		for _, label := range vm.RuleLabels {
@@ -139,7 +142,7 @@ templ handSection(vm TableVM) {
 				<span class="text-sm text-amber-300 font-semibold">出すカードを選んでください</span>
 			}
 		</div>
-		<form method="post" action="/play" class="flex flex-wrap gap-2">
+		<form method="post" action="/hearts/play" class="flex flex-wrap gap-2">
 			for _, c := range vm.Hand {
 				if vm.YourTurn {
 					<button
@@ -199,7 +202,7 @@ templ passSection(vm TableVM) {
 				あと { itoa(vm.PassCount) } 枚
 			</p>
 		</div>
-		<form method="post" action="/pass" id="pass-form" data-need={ itoa(vm.PassCount) }>
+		<form method="post" action="/hearts/pass" id="pass-form" data-need={ itoa(vm.PassCount) }>
 			<div class="flex flex-wrap gap-2">
 				for _, c := range vm.Hand {
 					<label class="cursor-pointer">
@@ -266,7 +269,7 @@ templ passScript() {
 
 templ nextTrickBar(vm TableVM) {
 	<section class="flex justify-center">
-		<form method="post" action="/next">
+		<form method="post" action="/hearts/next">
 			<button type="submit" class="bg-emerald-600 hover:bg-emerald-500 rounded px-8 py-2 font-semibold">
 				if vm.TrickNo < vm.TrickTotal {
 					次のトリックへ
@@ -313,7 +316,7 @@ templ roundResult(vm TableVM) {
 				}
 			</tbody>
 		</table>
-		<form method="post" action="/next" class="mt-4 flex justify-center">
+		<form method="post" action="/hearts/next" class="mt-4 flex justify-center">
 			<button type="submit" class="bg-emerald-600 hover:bg-emerald-500 rounded px-8 py-2 font-semibold">
 				次へ
 			</button>
@@ -345,12 +348,12 @@ templ gameOver(vm TableVM) {
 			</tbody>
 		</table>
 		<div class="flex flex-wrap gap-3 justify-center">
-			<form method="post" action="/new">
+			<form method="post" action="/hearts/new">
 				<button type="submit" class="bg-amber-500 hover:bg-amber-400 text-emerald-950 font-bold rounded px-8 py-2">
 					同じルールでもう一度
 				</button>
 			</form>
-			<form method="post" action="/setup">
+			<form method="post" action="/hearts/setup">
 				<button type="submit" class="border border-emerald-600 hover:bg-emerald-800 rounded px-8 py-2 font-semibold">
 					ルールを選び直す
 				</button>
